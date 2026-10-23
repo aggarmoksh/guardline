@@ -1,0 +1,9 @@
+.env
+*.db
+logs/
+fixtures/raw/
+.venv/
+node_modules/
+__pycache__/
+.pytest_cache/
+*.pyc
