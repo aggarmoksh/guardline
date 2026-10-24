@@ -97,9 +97,9 @@ def score_risk(s: Signals) -> Risk:
         r.level = "HIGH"
         r.reasons.append(code)
 
-    if (s.verification_status is not None and s.verification_status != "SUBJECT_FOUND") \
-            or s.risk_indicator == "HIGH":
-        high("CRS_NOT_FOUND_OR_HIGH")
+    if s.verification_status is not None and s.verification_status != "SUBJECT_FOUND":
+        r.unverified = True  # thin-file or no-file members must not be HIGH: hand to a human
+        r.reasons.append("CRS_NO_FILE")
     codes = set(s.alert_codes)
     if codes & MISMATCH_OR_SYNTHETIC:
         high("CRS_IDENTITY_MISMATCH_OR_SYNTHETIC")
@@ -108,7 +108,7 @@ def score_risk(s: Signals) -> Risk:
     if FRAUD_ALERT in codes:
         r.step_up = True
         r.reasons.append("CRS_FRAUD_ALERT")
-        r.flags.append("HUMAN_REVIEW")
+        r.flags += ["FRAUD_ALERT", "HUMAN_REVIEW"]
     reverse_mismatch = s.calling_record_found is False or (s.calling_record_found and s.calling_name_matches is False)
     if s.calling_record_found is False:
         r.step_up = True
@@ -128,9 +128,10 @@ def score_risk(s: Signals) -> Risk:
             r.unverified = True
     if s.redirect_to_new_number:
         high("REDIRECT_TO_NEW_NUMBER")
-    if s.new_email_valid is False:
-        high("NEW_EMAIL_INVALID")
-        r.flags.append("NEW_EMAIL_INVALID")
+    if s.new_email_valid is False:  # flag it and require the step-up; not HIGH on its own
+        r.step_up = True
+        r.reasons.append("NEW_EMAIL_INVALID")
+        r.flags.append("EMAIL_INVALID")
     if s.request_types & CONTACT_CHANGES and s.request_types & MONEY_OR_CREDENTIALS:
         high("CONTACT_CHANGE_WITH_MONEY_OR_CREDENTIALS")
     return r
@@ -301,6 +302,9 @@ class Policy:
         risk = self._apply_risk()
         if risk.level == "HIGH":
             return self._finish("escalated_high", None, "escalate")
+        if risk.unverified:
+            c.risk_level = "MEDIUM"
+            return self._finish("unverified_handoff", None, "escalate")
         if risk.step_up:
             c.state = "step_up"
             c.add_reason("STEP_UP_REQUIRED")

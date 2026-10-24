@@ -68,9 +68,10 @@ def test_row1_second_attempt_can_succeed():
     assert p.case.outcome == "verified_handoff" and turn.done
 
 
-def test_row2_subject_not_found_is_high():
+def test_row2_subject_not_found_is_unverified_handoff_medium_crs_no_file():
     case, _ = call(StubFacts(status="SUBJECT_NOT_FOUND", risk="HIGH"))
-    assert case.outcome == "escalated_high" and "CRS_NOT_FOUND_OR_HIGH" in case.reasons
+    assert case.outcome == "unverified_handoff" and case.risk_level == "MEDIUM"
+    assert "CRS_NO_FILE" in case.reasons and not case.verified
 
 
 @pytest.mark.parametrize("persona", ["P12", "P13"])
@@ -99,7 +100,7 @@ def test_row5_fraud_alert_requires_step_up_and_review():
     case, turn = call(FixtureFacts("P16"))
     assert case.state == "step_up" and turn.message_id == "ask_app_approval"
     case, _ = call(FixtureFacts("P16"), then=[Interpretation(intent="confirm_approval")])
-    assert case.outcome == "verified_handoff" and "HUMAN_REVIEW" in case.flags and "CRS_FRAUD_ALERT" in case.reasons
+    assert case.outcome == "verified_handoff" and {"FRAUD_ALERT", "HUMAN_REVIEW"} <= set(case.flags) and "CRS_FRAUD_ALERT" in case.reasons
 
 
 def test_row6_calling_number_name_differs_requires_step_up():
@@ -134,10 +135,15 @@ def test_row8_redirect_to_new_number_is_high():
     assert case.outcome == "escalated_high" and "REDIRECT_TO_NEW_NUMBER" in case.reasons
 
 
-def test_row9_invalid_new_email_is_high_flag():
+def test_row9_invalid_new_email_flags_and_requires_step_up_but_is_not_high():
     first = Interpretation(intent="make_request", request_types=("change_email",), new_contact_value="x@x")
-    case, _ = call(StubFacts(email_ok=False), first=first)
-    assert case.outcome == "escalated_high" and "NEW_EMAIL_INVALID" in case.flags
+    case, turn = call(StubFacts(email_ok=False), first=first)
+    assert turn.message_id == "ask_app_approval" and case.outcome is None and case.risk_level != "HIGH"
+    assert "EMAIL_INVALID" in case.flags
+    case, _ = call(StubFacts(email_ok=False), first=first, then=[Interpretation(intent="confirm_approval")])
+    assert case.outcome == "verified_handoff" and "EMAIL_INVALID" in case.flags and case.risk_level == "LOW"
+    case, _ = call(StubFacts(email_ok=False), first=first, app="denied", then=[Interpretation(intent="confirm_approval")])
+    assert case.outcome == "unverified_handoff"
 
 
 def test_row10_contact_change_with_money_is_high_even_when_clean():
@@ -343,3 +349,9 @@ def test_late_non_contact_request_needs_no_step_up():
     p = verified_without_request()
     t = p.handle(Interpretation(intent="make_request", request_types=("balance_inquiry",)))
     assert t.done and p.case.outcome == "verified_handoff"
+
+
+def test_risk_indicator_high_alone_is_not_an_identity_signal():
+    case, _ = call(StubFacts(status="SUBJECT_FOUND", risk="HIGH"),
+                   first=Interpretation(intent="make_request", request_types=("balance_inquiry",)))
+    assert case.outcome == "verified_handoff"

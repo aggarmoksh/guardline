@@ -59,17 +59,17 @@ GuardLine never moves money, changes contact details or resets credentials. It d
 | Stated name, DOB, ZIP and last 4 do not match the member record (first time) | local member fixture | Ask once to re-enter. Never say which field failed |
 | Same mismatch a second time | local member fixture | `unverified_handoff`, risk MEDIUM, IDENTITY_NOT_CONFIRMED |
 | Name differs from the record but DOB, ZIP and last 4 are all exact | local member fixture | Pass if Jaro-Winkler >= 0.88 on the full name; reason NAME_FUZZY_MATCH. Never fuzzy when any digit field is wrong |
-| SUBJECT_NOT_FOUND or HIGH | CRS identity | HIGH, escalate |
+| SUBJECT_NOT_FOUND on the member record | CRS identity | `unverified_handoff`, risk MEDIUM, CRS_NO_FILE (thin-file members must not be HIGH). The riskIndicator is never used |
 | Code 2201, 2202 or 2101 | CRS identity | HIGH: identity mismatch or synthetic |
 | Code 2301 | CRS identity | HIGH: deceased indicator |
-| Code 2401 | CRS identity | Step-up required + human review: fraud alert |
+| Code 2401 | CRS identity | Step-up required + flags FRAUD_ALERT and HUMAN_REVIEW |
 | Reverse lookup of the calling-from number returns a different name | CRS reverse phone | Step-up required |
 | Reverse lookup of the calling-from number returns no record | CRS reverse phone | Step-up required + flag (P13 pattern) |
 | Any contact-change request | policy | Step-up required (simulated app approval) |
 | Simulated app approval denied or timed out, AND reverse phone returned a different name or no record | simulated + CRS | HIGH, escalate |
 | Simulated app approval denied or timed out, reverse phone clean | simulated | `unverified_handoff`, risk MEDIUM |
 | Caller asks to "send it to a new number" | interpreter enum | HIGH, escalate |
-| Requested new email has invalid status | CRS FraudFinder | HIGH, escalate |
+| Requested new email has invalid status | CRS FraudFinder | Flag EMAIL_INVALID + step-up required. Not HIGH on its own |
 | Contact change on the same call as money movement or a credential reset | policy | HIGH regardless of verification |
 
 DOB, ZIP and SSN last 4 are entered on the keypad on `/call` (asked one at a time, in that order). Typed values go straight to the policy, never through STT or the LLM, and are never logged. The CLI still takes them from script lines through the interpreter.
@@ -163,3 +163,4 @@ Flag anything inconsistent outside your scope and stop. Never claim a check pass
 - Oct 24 (advisor, Phase 2-FIX): keypad for DOB, ZIP and last 4. Name match is exact after normalizing case, accents and spaces, or fuzzy (Jaro-Winkler >= 0.88 on the full name) only when DOB, ZIP and last 4 are all exact (reason NAME_FUZZY_MATCH). A stated-detail mismatch asks once to re-enter, then ends `unverified_handoff` MEDIUM (IDENTITY_NOT_CONFIRMED). HIGH comes only from CRS alert codes, REDIRECT_TO_NEW_NUMBER, CONTACT_CHANGE_WITH_MONEY_OR_CREDENTIALS, and a denied or timed-out approval together with a reverse-phone mismatch.
 - Oct 24 (Phase 2-FIX, builder interpretation, needs advisor confirmation): CRS SUBJECT_NOT_FOUND/HIGH and an invalid new email stay HIGH, because "HIGH only from" does not mention them and removing them would weaken safety. A denied or timed-out approval with a clean reverse phone ends `unverified_handoff` MEDIUM (APP_APPROVAL_DENIED or APP_APPROVAL_TIMEOUT).
 - Oct 24 (Phase 2-FIX, builder bug fix): a contact-change request that arrived after identity was verified skipped the step-up and went straight to handoff (found on the operator's first keypad call, where the first utterance was misheard and the request came last). The request state now re-applies the step-up rule: approval, then handoff. A denied or timed-out approval clears `verified` and ends `unverified_handoff` MEDIUM.
+- Oct 24 (advisor, Phase 3): CRS SUBJECT_NOT_FOUND on the member record ends `unverified_handoff` MEDIUM (CRS_NO_FILE), never HIGH, so thin-file members are not penalised. This supersedes the builder interpretation that kept it HIGH. An invalid new email adds the flag EMAIL_INVALID and requires step-up; it is not HIGH alone. A denied or timed-out approval with a clean reverse phone ends `unverified_handoff` MEDIUM (accepted). The builder also added the flag name FRAUD_ALERT next to HUMAN_REVIEW for code 2401, because eval case L15 names it.

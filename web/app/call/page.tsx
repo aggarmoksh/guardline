@@ -36,12 +36,14 @@ export default function Call() {
   const [persona, setPersona] = useState("P01");
   const [lines, setLines] = useState<Line[]>([]);
   const [status, setStatus] = useState("");
-  const [recording, setRecording] = useState(false);
+  const [recording, setRecording] = useState(false); // button held
+  const [capturing, setCapturing] = useState(false); // mic is actually delivering audio
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<string | null>(null);
   const [awaiting, setAwaiting] = useState(false);
   const [expect, setExpect] = useState<TurnResp["expect"]>(null);
   const [typed, setTyped] = useState("");
+  const [caseIdShown, setCaseIdShown] = useState("");
   const caseId = useRef("");
   const stream = useRef<MediaStream | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -77,6 +79,7 @@ export default function Call() {
       if (!res.ok) throw new Error("start failed");
       const r: TurnResp = await res.json();
       caseId.current = r.case_id!;
+      setCaseIdShown(r.case_id!);
       setStarted(true);
       setStatus("");
       await applyResp(r);
@@ -113,16 +116,18 @@ export default function Call() {
     const mime = pickMime();
     const rec = new MediaRecorder(stream.current, mime ? { mimeType: mime } : undefined);
     rec.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
+    rec.onstart = () => setCapturing(true); // only now is the first word safe to say
     rec.start();
     recorder.current = rec;
     setRecording(true);
-    setStatus("Listening...");
+    setStatus("");
   };
 
   const release = async () => {
     const rec = recorder.current;
     if (!rec || rec.state !== "recording") return;
     setRecording(false);
+    setCapturing(false);
     setBusy(true);
     setStatus("Thinking...");
     const stopped = new Promise<void>((res) => (rec.onstop = () => res()));
@@ -206,25 +211,26 @@ export default function Call() {
       ) : expect && expect !== "name" ? (
         <div className="flex flex-col gap-2">
           <p className="text-center text-sm">{KEYPAD_FIELDS[expect].label}</p>
-          <p className="h-10 text-center text-3xl tracking-widest">
-            {(KEYPAD_FIELDS[expect].mask ? "•".repeat(typed.length) : typed) || " "}
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK"].map((k) => (
-              <button
-                key={k}
-                disabled={busy || (k === "OK" && typed.length !== KEYPAD_FIELDS[expect].length)}
-                onClick={() => {
-                  if (k === "⌫") setTyped((t) => t.slice(0, -1));
-                  else if (k === "OK") submitTyped();
-                  else setTyped((t) => (t.length < KEYPAD_FIELDS[expect].length ? t + k : t));
-                }}
-                className={`h-14 rounded-xl text-2xl font-semibold ${k === "OK" ? "bg-green-600 text-white" : "bg-gray-700 text-white"} disabled:opacity-40`}
-              >
-                {k}
-              </button>
-            ))}
-          </div>
+          <input
+            key={expect}
+            autoFocus
+            type={KEYPAD_FIELDS[expect].mask ? "password" : "text"}
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="off"
+            maxLength={KEYPAD_FIELDS[expect].length}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value.replace(/[^0-9]/g, "").slice(0, KEYPAD_FIELDS[expect].length))}
+            onKeyDown={(e) => { if (e.key === "Enter" && typed.length === KEYPAD_FIELDS[expect].length) submitTyped(); }}
+            className="rounded-xl border bg-transparent p-4 text-center text-3xl tracking-widest"
+          />
+          <button
+            disabled={busy || typed.length !== KEYPAD_FIELDS[expect].length}
+            onClick={submitTyped}
+            className="h-14 rounded-xl bg-green-600 text-2xl font-semibold text-white disabled:opacity-40"
+          >
+            OK
+          </button>
         </div>
       ) : (
         <button
@@ -234,12 +240,15 @@ export default function Call() {
           onContextMenu={(e) => e.preventDefault()}
           disabled={busy && !recording}
           style={{ touchAction: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
-          className={`h-32 rounded-full text-xl font-bold text-white ${recording ? "bg-red-600" : "bg-blue-600"} disabled:opacity-40`}
+          className={`h-32 rounded-full text-xl font-bold text-white ${capturing ? "bg-red-600" : "bg-blue-600"} disabled:opacity-40`}
         >
-          {recording ? "Release to send" : "Hold to talk"}
+          {capturing ? "Release to send" : recording ? "Starting mic..." : "Hold to talk"}
         </button>
       )}
-      <p className="h-5 text-center text-sm opacity-70">{status}</p>
+      <p className="h-5 text-center text-sm opacity-70">
+        {capturing ? <span className="font-semibold text-red-500">● Recording</span> : status}
+      </p>
+      <p className="text-center text-[10px] opacity-40">Case {caseIdShown}</p>
     </main>
   );
 }
