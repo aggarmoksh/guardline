@@ -199,6 +199,7 @@ class Policy:
         self._signals = Signals()
         self._unclear = 0
         self._identity_failures = 0
+        self._stepped_up = False  # the simulated app approval has been given on this call
 
     # -- entry points -------------------------------------------------------
     def start(self) -> Turn:
@@ -325,7 +326,9 @@ class Policy:
             return self._finish("escalated_high", None, "escalate")
         if risk.unverified:
             self.case.risk_level = "MEDIUM"
+            self.case.verified = False  # identity was checked, but the step-up failed
             return self._finish("unverified_handoff", None, "escalate")
+        self._stepped_up = True
         self.case.add_reason("APP_APPROVED_SIMULATED")
         return self._verified()
 
@@ -339,8 +342,14 @@ class Policy:
         return Turn("ask_request")
 
     def _request_state(self) -> Turn:
-        if not self.case.request_types:
+        c = self.case
+        if not c.request_types:
             return Turn("ask_request")
+        # A request that arrives after identity was checked still needs the step-up it would have needed earlier.
+        if self._apply_risk().step_up and not self._stepped_up:
+            c.state = "step_up"
+            c.add_reason("STEP_UP_REQUIRED")
+            return Turn("ask_app_approval")
         return self._finish("verified_handoff", "HANDOFF_WITH_REQUEST", "handoff")
 
     # -- helpers ------------------------------------------------------------

@@ -311,3 +311,35 @@ def test_typed_values_never_reach_the_public_case_file():
     type_all(p)
     blob = str(p.case.public())
     assert not any(v in blob for v in ("1990-01-02", "90210", "4321"))
+
+
+# -- a request that arrives after identity was verified still needs its step-up ------------
+def verified_without_request(app="approved"):
+    p = Policy(FAKE, FixtureFacts("P01"), "member", lambda _i: app, keypad_mode=True)
+    p.start()
+    p.handle(Interpretation(intent="unclear"))
+    p.handle(Interpretation(stated_name="Test Person"))
+    t = type_all(p)
+    assert t.message_id == "ask_request" and p.case.verified and p.case.state == "request"
+    return p
+
+
+def test_late_contact_change_request_requires_step_up_then_hands_off():
+    p = verified_without_request()
+    t = p.handle(Interpretation(intent="make_request", request_types=("change_mailing_address",)))
+    assert t.message_id == "ask_app_approval" and not t.done and p.case.state == "step_up"
+    t = p.handle(Interpretation(intent="confirm_approval"))
+    assert t.done and p.case.outcome == "verified_handoff" and "APP_APPROVED_SIMULATED" in p.case.reasons
+
+
+def test_late_contact_change_denied_is_unverified_medium_and_not_verified():
+    p = verified_without_request(app="denied")
+    p.handle(Interpretation(intent="make_request", request_types=("change_mailing_address",)))
+    p.handle(Interpretation(intent="confirm_approval"))
+    assert p.case.outcome == "unverified_handoff" and p.case.risk_level == "MEDIUM" and not p.case.verified
+
+
+def test_late_non_contact_request_needs_no_step_up():
+    p = verified_without_request()
+    t = p.handle(Interpretation(intent="make_request", request_types=("balance_inquiry",)))
+    assert t.done and p.case.outcome == "verified_handoff"
