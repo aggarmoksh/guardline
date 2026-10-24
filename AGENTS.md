@@ -47,8 +47,8 @@ GuardLine never moves money, changes contact details or resets credentials. It d
     - P14 deceased: 2301, 2101
     - P16 fraud alert: 2401
     - Everyone else: none
-- **Phone ownership:** `POST /accurate-append/reverse` with `{phoneNumber}`. It exists for every persona. Its behavior is untested (Phase 1A probes it).
-- **Fraud score:** `POST /fraud-finder/fraud-finder` (AtData FraudFinder) with fields `firstName, lastName, phoneNumber, email, ipAddress, address`. The sample returned score 3 with a valid email; an altered email returned score 8 with an invalid email. The scale and threshold are unknown.
+- **Phone ownership:** `POST /accurate-append/reverse` with `{phoneNumber}`. Measured in Phase 1A: a persona's own phone returns that persona (P01, P02, P16); P13's own phone returns no record; a made-up number still returns a person. The response has no match or confidence fields and the name filter is ignored. Ownership therefore means **the returned name equals the member record's name**, compared in code.
+- **Fraud score:** `POST /fraud-finder/fraud-finder` (AtData FraudFinder) with fields `firstName, lastName, phoneNumber, email, ipAddress, address`. Measured: P01's own email gives a valid status (code 50) and score 11; invalid emails return NO score, with status codes 325 or 115. The score scale is unknown. Use the email validation status, never the score alone.
 - **OTP and KBA (TUC3004) are not mocked.** No send-code or quiz request exists in the collection. Any step-up is **simulated and labeled "simulated" in the UI and README.**
 - **CRS booth, Oct 23:** a CRS engineer said "you can check phone number and verify address and identify the person," and that they want to be surprised by uses they had not thought of.
 
@@ -61,9 +61,10 @@ GuardLine never moves money, changes contact details or resets credentials. It d
 | Code 2201, 2202 or 2101 | CRS identity | HIGH: identity mismatch or synthetic |
 | Code 2301 | CRS identity | HIGH: deceased indicator |
 | Code 2401 | CRS identity | Step-up required + human review: fraud alert |
-| Calling-from number not tied to the member | CRS reverse phone (pending probe) | Step-up required |
+| Reverse lookup of the calling-from number returns a different name | CRS reverse phone | Step-up required |
+| Reverse lookup of the calling-from number returns no record | CRS reverse phone | Step-up required + flag (P13 pattern) |
 | Simulated app approval denied, timed out, or "send it to a new number" | simulated | HIGH, escalate |
-| Requested new email scores invalid or high | CRS FraudFinder | Flag on the case file |
+| Requested new email has invalid status | CRS FraudFinder | HIGH flag on the case file |
 | Contact change on the same call as money movement or a credential reset | policy | HIGH regardless of verification |
 
 The agent never reads back, confirms or denies any on-file value.
@@ -135,8 +136,16 @@ Flag anything inconsistent outside your scope and stop. Never claim a check pass
 - **Wi-Fi:** venue Wi-Fi is unreliable. The demo phone uses cellular to reach the cloud backend.
 - **Windows:** use `python -m`, forward slashes in Git Bash, and no symlinks.
 
+## Judging criteria heard at booths
+
+- **Microsoft (from a TPM/FDE, Oct 23):** real-world usage, customer focus, impact, usability, reproducible in production, uniqueness and innovation, end to end (which he called the hardest), understanding rather than vibe coding, ethics, and a human in the loop.
+- **CRS:** surprise us with a use we had not thought of.
+
+**Understanding rule:** every phase report ends with a short plain-English "How it works" section, so the operator can explain any file to a judge.
+
 ## Decision log
 
 - Oct 22: Option A. The step-up is a simulated banking-app approval, labeled. Reason: OTP and KBA are not mocked in the sandbox.
 - Oct 22: "Pass" in the sandbox means SUBJECT_FOUND with no alert codes, plus a local member-record match. Reason: the score is a constant fixture.
 - Oct 23: Speech goes behind an adapter, and Cartesia STT is a candidate. Reason: Cartesia has STT, TTS and voice agents in 40+ languages, which strengthens the Cartesia prize.
+- Oct 24: Phase 1A verified (commit 9b8d397). Reverse phone gives an ownership check by comparing names in code. FraudFinder uses email status, not score. Solo submission confirmed by organizers.
