@@ -208,6 +208,15 @@ def decide_approval(body: ApprovalDecision):
     return {"ok": True}
 
 
+@app.get("/api/case/{case_id}")
+def case_file(case_id: str):
+    """Case file for the human: codes and enums only, no member data."""
+    sess = _sessions.get(case_id)
+    if not sess:
+        raise HTTPException(404, "unknown case")
+    return sess.policy.case.public()
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
