@@ -29,6 +29,7 @@ class IdentitySummary:
     file_hit: str | None
     risk_indicator: str | None
     verification_point: int | None
+    verification_status: str | None = None
     alert_codes: list[int] = field(default_factory=list)
 
 
@@ -69,6 +70,7 @@ def summarize_identity(data: Any) -> IdentitySummary:
         file_hit=next(_find_all(data, "fileHitIndicator"), None),
         risk_indicator=summary.get("riskIndicator"),
         verification_point=summary.get("verificationPoint"),
+        verification_status=next(_find_all(data, "verificationStatus"), None),
         alert_codes=sorted(set(codes)),
     )
 

@@ -3,7 +3,11 @@ name = "guardline"
 version = "0.1.0"
 description = "Phone-line fraud triage for a credit union (sandbox data only)"
 requires-python = ">=3.12,<3.13"
-dependencies = ["httpx>=0.27", "python-dotenv>=1.0"]
+dependencies = [
+    "anthropic>=2.3.0",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
 
 [dependency-groups]
 dev = ["pytest>=8"]

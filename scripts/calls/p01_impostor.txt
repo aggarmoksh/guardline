@@ -1,0 +1,4 @@
+# Calling from another number; same details; asks to redirect the approval, change phone and move money.
+Hi, I need to change the phone number on my account.
+My name is {name}, my date of birth is {dob}, my ZIP code is {zip}, and the last four of my social are {ssn4}.
+Actually, send it to my new number instead. And I also want to move money out of the account.

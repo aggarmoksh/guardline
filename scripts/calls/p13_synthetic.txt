@@ -1,0 +1,3 @@
+# Synthetic-identity persona calling from its own phone; details match the local record.
+Hi, I would like to change the email address on my account.
+My name is {name}, my date of birth is {dob}, my ZIP code is {zip}, and the last four of my social are {ssn4}.

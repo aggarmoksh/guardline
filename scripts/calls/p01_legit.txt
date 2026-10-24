@@ -1,0 +1,4 @@
+# Calling from the member's phone; approves the app; asks to change mailing address.
+Hi, I need to change the mailing address on my account.
+My name is {name}, my date of birth is {dob}, my ZIP code is {zip}, and the last four of my social are {ssn4}.
+Okay, I just approved it in the app.

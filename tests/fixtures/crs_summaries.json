@@ -1,0 +1,75 @@
+{
+  "personas": {
+    "P01": {
+      "alert_codes": [],
+      "verification_status": "SUBJECT_FOUND",
+      "risk_indicator": "MEDIUM",
+      "reverse_phone": {
+        "record_found": true,
+        "name_matches_member": true
+      }
+    },
+    "P02": {
+      "alert_codes": [],
+      "verification_status": "SUBJECT_FOUND",
+      "risk_indicator": "MEDIUM",
+      "reverse_phone": {
+        "record_found": true,
+        "name_matches_member": true
+      }
+    },
+    "P12": {
+      "alert_codes": [
+        2101,
+        2201,
+        2202
+      ],
+      "verification_status": "SUBJECT_FOUND",
+      "risk_indicator": "MEDIUM",
+      "reverse_phone": {
+        "record_found": true,
+        "name_matches_member": false
+      }
+    },
+    "P13": {
+      "alert_codes": [
+        2101,
+        2201,
+        2202
+      ],
+      "verification_status": "SUBJECT_FOUND",
+      "risk_indicator": "MEDIUM",
+      "reverse_phone": {
+        "record_found": false,
+        "name_matches_member": false
+      }
+    },
+    "P14": {
+      "alert_codes": [
+        2101,
+        2301
+      ],
+      "verification_status": "SUBJECT_FOUND",
+      "risk_indicator": "MEDIUM",
+      "reverse_phone": {
+        "record_found": true,
+        "name_matches_member": true
+      }
+    },
+    "P16": {
+      "alert_codes": [
+        2401
+      ],
+      "verification_status": "SUBJECT_FOUND",
+      "risk_indicator": "MEDIUM",
+      "reverse_phone": {
+        "record_found": true,
+        "name_matches_member": true
+      }
+    }
+  },
+  "calling_from_other": {
+    "record_found": true,
+    "name_matches_member": false
+  }
+}
