@@ -19,7 +19,7 @@ from guardline.speech import Speech, SpeechError, get_speech
 
 log = get_logger("guardline.api")
 LATENCY_CSV = Path(__file__).resolve().parents[1] / "logs" / "latency.csv"
-LATENCY_FIELDS = ["ts", "provider", "language", "stt_ms", "llm_ms", "tts_ms", "total_ms"]
+LATENCY_FIELDS = ["ts", "kind", "provider", "language", "stt_ms", "llm_ms", "tts_ms", "total_ms"]
 
 app = FastAPI(title="GuardLine")
 _lock = threading.Lock()
@@ -84,7 +84,8 @@ def _speak(sess: Session, message_id: str) -> tuple[str, str | None, float, floa
 def _public_state(sess: Session) -> dict:
     c = sess.policy.case
     return {"state": c.state, "outcome": c.outcome, "language": c.language,
-            "awaiting_approval": c.state == "step_up" and sess.approval is None}
+            "awaiting_approval": c.state == "step_up" and sess.approval is None,
+            "expect": sess.policy.expected_field()}
 
 
 class StartRequest(BaseModel):
@@ -108,7 +109,8 @@ def start_call(req: StartRequest):
         decided = holder["s"].approval
         return decided or "timeout"  # nobody answered the simulated app
 
-    policy = Policy(member, LiveFacts(req.persona, member.name), req.calling_from, approval, req.language)
+    policy = Policy(member, LiveFacts(req.persona, member.name), req.calling_from, approval, req.language,
+                    keypad_mode=True)
     sess = holder["s"] = Session(policy)
     turn = policy.start()
     text, audio, _, _ = _speak(sess, turn.message_id)
@@ -153,11 +155,33 @@ def turn(case_id: str = Form(...), language: str = Form("en"), audio: UploadFile
     text, audio_b64, speak_llm_ms, tts_ms = _speak(sess, t.message_id)
     llm_ms += speak_llm_ms
     total_ms = (time.perf_counter() - t_total) * 1000
-    _log_latency({"ts": int(time.time()), "provider": speech().name, "language": lang,
+    _log_latency({"ts": int(time.time()), "kind": "voice", "provider": speech().name, "language": lang,
                   "stt_ms": round(stt_ms), "llm_ms": round(llm_ms), "tts_ms": round(tts_ms), "total_ms": round(total_ms)})
     return {"transcript": transcript, "stt_failed": stt_failed, "agent_text": text, "agent_audio": audio_b64,
             "audio_mime": "audio/wav", "done": t.done, **_public_state(sess),
             "timings_ms": {"stt": round(stt_ms), "llm": round(llm_ms), "tts": round(tts_ms), "total": round(total_ms)}}
+
+
+class Entry(BaseModel):
+    case_id: str
+    field: str  # dob (MMDDYYYY) | zip | ssn_last4
+    value: str
+
+
+@app.post("/api/entry")
+def keypad_entry(body: Entry):
+    """Typed identity detail: straight to the policy. Not transcribed, not sent to the LLM, never logged."""
+    sess = _sessions.get(body.case_id)
+    if not sess:
+        raise HTTPException(404, "unknown case")
+    t_total = time.perf_counter()
+    t = sess.policy.provide_typed(body.field, body.value)
+    text, audio_b64, llm_ms, tts_ms = _speak(sess, t.message_id)
+    total_ms = (time.perf_counter() - t_total) * 1000
+    _log_latency({"ts": int(time.time()), "kind": "keypad", "provider": speech().name, "language": sess.policy.case.language,
+                  "stt_ms": 0, "llm_ms": round(llm_ms), "tts_ms": round(tts_ms), "total_ms": round(total_ms)})
+    return {"agent_text": text, "agent_audio": audio_b64, "audio_mime": "audio/wav", "done": t.done,
+            **_public_state(sess)}
 
 
 class ApprovalDecision(BaseModel):

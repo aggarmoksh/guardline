@@ -56,16 +56,23 @@ GuardLine never moves money, changes contact details or resets credentials. It d
 
 | Signal | Source | Effect |
 |---|---|---|
-| Stated name, DOB, ZIP and last 4 do not match the member record | local member fixture | HIGH, escalate. Never say which field failed |
+| Stated name, DOB, ZIP and last 4 do not match the member record (first time) | local member fixture | Ask once to re-enter. Never say which field failed |
+| Same mismatch a second time | local member fixture | `unverified_handoff`, risk MEDIUM, IDENTITY_NOT_CONFIRMED |
+| Name differs from the record but DOB, ZIP and last 4 are all exact | local member fixture | Pass if Jaro-Winkler >= 0.88 on the full name; reason NAME_FUZZY_MATCH. Never fuzzy when any digit field is wrong |
 | SUBJECT_NOT_FOUND or HIGH | CRS identity | HIGH, escalate |
 | Code 2201, 2202 or 2101 | CRS identity | HIGH: identity mismatch or synthetic |
 | Code 2301 | CRS identity | HIGH: deceased indicator |
 | Code 2401 | CRS identity | Step-up required + human review: fraud alert |
 | Reverse lookup of the calling-from number returns a different name | CRS reverse phone | Step-up required |
 | Reverse lookup of the calling-from number returns no record | CRS reverse phone | Step-up required + flag (P13 pattern) |
-| Simulated app approval denied, timed out, or "send it to a new number" | simulated | HIGH, escalate |
-| Requested new email has invalid status | CRS FraudFinder | HIGH flag on the case file |
+| Any contact-change request | policy | Step-up required (simulated app approval) |
+| Simulated app approval denied or timed out, AND reverse phone returned a different name or no record | simulated + CRS | HIGH, escalate |
+| Simulated app approval denied or timed out, reverse phone clean | simulated | `unverified_handoff`, risk MEDIUM |
+| Caller asks to "send it to a new number" | interpreter enum | HIGH, escalate |
+| Requested new email has invalid status | CRS FraudFinder | HIGH, escalate |
 | Contact change on the same call as money movement or a credential reset | policy | HIGH regardless of verification |
+
+DOB, ZIP and SSN last 4 are entered on the keypad on `/call` (asked one at a time, in that order). Typed values go straight to the policy, never through STT or the LLM, and are never logged. The CLI still takes them from script lines through the interpreter.
 
 The agent never reads back, confirms or denies any on-file value.
 
@@ -153,3 +160,5 @@ Flag anything inconsistent outside your scope and stop. Never claim a check pass
 - Oct 24 (advisor, Phase 2): contact-change step-up accepted. Invalid new email is HIGH (accepted). A human request before verification ends as the new outcome `unverified_handoff` with risk MEDIUM, not HIGH.
 - Oct 24 (advisor, Phase 2): bug fixed. An LLM failure used to look like 3 unclear turns. It now ends the call as `ended_safe` with reason LLM_UNAVAILABLE and an ESCALATED_TO_HUMAN flag, never "please repeat". Invalid model output still asks the caller to repeat.
 - Oct 24 (Phase 2, builder): the caller's language chip locks the language; the interpreter's per-utterance detection no longer overrides it. Fixed Spanish renderings are cached and prewarmed at API startup. Anthropic calls run with thinking disabled (with it on, a 120-token cap returned an empty reply).
+- Oct 24 (advisor, Phase 2-FIX): keypad for DOB, ZIP and last 4. Name match is exact after normalizing case, accents and spaces, or fuzzy (Jaro-Winkler >= 0.88 on the full name) only when DOB, ZIP and last 4 are all exact (reason NAME_FUZZY_MATCH). A stated-detail mismatch asks once to re-enter, then ends `unverified_handoff` MEDIUM (IDENTITY_NOT_CONFIRMED). HIGH comes only from CRS alert codes, REDIRECT_TO_NEW_NUMBER, CONTACT_CHANGE_WITH_MONEY_OR_CREDENTIALS, and a denied or timed-out approval together with a reverse-phone mismatch.
+- Oct 24 (Phase 2-FIX, builder interpretation, needs advisor confirmation): CRS SUBJECT_NOT_FOUND/HIGH and an invalid new email stay HIGH, because "HIGH only from" does not mention them and removing them would weaken safety. A denied or timed-out approval with a clean reverse phone ends `unverified_handoff` MEDIUM (APP_APPROVAL_DENIED or APP_APPROVAL_TIMEOUT).

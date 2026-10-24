@@ -12,8 +12,15 @@ type TurnResp = {
   outcome: string | null;
   language: "en" | "es";
   awaiting_approval: boolean;
+  expect?: "name" | "dob" | "zip" | "ssn_last4" | null;
   case_id?: string;
 };
+
+const KEYPAD_FIELDS = {
+  dob: { label: "Date of birth (MMDDYYYY)", length: 8, mask: false },
+  zip: { label: "ZIP code", length: 5, mask: false },
+  ssn_last4: { label: "Last 4 of SSN", length: 4, mask: true },
+} as const;
 
 const OUTCOME_LABEL: Record<string, string> = {
   verified_handoff: "Verified. Passed to a team member.",
@@ -33,6 +40,8 @@ export default function Call() {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<string | null>(null);
   const [awaiting, setAwaiting] = useState(false);
+  const [expect, setExpect] = useState<TurnResp["expect"]>(null);
+  const [typed, setTyped] = useState("");
   const caseId = useRef("");
   const stream = useRef<MediaStream | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -49,6 +58,8 @@ export default function Call() {
     setLines((x) => [...x, { who: "agent", text: r.agent_text }]);
     setOutcome(r.outcome);
     setAwaiting(r.awaiting_approval);
+    setExpect(r.expect ?? null);
+    setTyped("");
     if (r.agent_audio) await playBase64Wav(r.agent_audio);
   };
 
@@ -71,6 +82,27 @@ export default function Call() {
       await applyResp(r);
     } catch (e) {
       setStatus(`Could not start: ${(e as Error).message}`);
+    }
+    setBusy(false);
+  };
+
+  // Typed details go straight to the policy: not recorded, not transcribed, not shown in the transcript.
+  const submitTyped = async () => {
+    if (!expect || expect === "name") return;
+    setBusy(true);
+    setStatus("Checking...");
+    try {
+      const res = await fetch("/api/entry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_id: caseId.current, field: expect, value: typed }),
+      });
+      if (!res.ok) throw new Error(`entry failed (${res.status})`);
+      const r: TurnResp = await res.json();
+      setStatus("");
+      await applyResp(r);
+    } catch (e) {
+      setStatus(`Error: ${(e as Error).message}`);
     }
     setBusy(false);
   };
@@ -171,6 +203,29 @@ export default function Call() {
       {awaiting && <p className="rounded-xl border-2 border-amber-500 p-3 text-sm">Approval requested in the simulated banking app (/approve). Approve there, then tell the agent.</p>}
       {outcome ? (
         <p className="rounded-xl bg-gray-900 p-4 text-center text-white">{OUTCOME_LABEL[outcome] ?? outcome}</p>
+      ) : expect && expect !== "name" ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-center text-sm">{KEYPAD_FIELDS[expect].label}</p>
+          <p className="h-10 text-center text-3xl tracking-widest">
+            {(KEYPAD_FIELDS[expect].mask ? "•".repeat(typed.length) : typed) || " "}
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK"].map((k) => (
+              <button
+                key={k}
+                disabled={busy || (k === "OK" && typed.length !== KEYPAD_FIELDS[expect].length)}
+                onClick={() => {
+                  if (k === "⌫") setTyped((t) => t.slice(0, -1));
+                  else if (k === "OK") submitTyped();
+                  else setTyped((t) => (t.length < KEYPAD_FIELDS[expect].length ? t + k : t));
+                }}
+                className={`h-14 rounded-xl text-2xl font-semibold ${k === "OK" ? "bg-green-600 text-white" : "bg-gray-700 text-white"} disabled:opacity-40`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+        </div>
       ) : (
         <button
           onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); press(); }}

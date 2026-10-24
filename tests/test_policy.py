@@ -46,9 +46,26 @@ def call(facts, *, calling_from="member", app="approved", first=None, second=Non
     return p.case, turn
 
 
-def test_row1_stated_mismatch_is_high():
-    case, _ = call(StubFacts(), second=identity_utterance(stated_zip="11111"))
-    assert case.outcome == "escalated_high" and "STATED_MISMATCH" in case.reasons
+def test_row1_stated_mismatch_asks_once_then_unverified_handoff_medium():
+    bad = identity_utterance(stated_zip="11111")
+    p = Policy(FAKE, FixtureFacts("P01"), "member", lambda _i: "approved")
+    p.start()
+    p.handle(Interpretation(intent="make_request", request_types=("balance_inquiry",)))
+    turn = p.handle(bad)
+    assert turn.message_id == "ask_reenter" and not turn.done and p.case.outcome is None
+    assert p.case.stated == {}  # re-entry from scratch, and the reply never says which field failed
+    turn = p.handle(bad)
+    assert turn.done and p.case.outcome == "unverified_handoff" and p.case.risk_level == "MEDIUM"
+    assert "IDENTITY_NOT_CONFIRMED" in p.case.reasons and not p.case.verified
+
+
+def test_row1_second_attempt_can_succeed():
+    p = Policy(FAKE, FixtureFacts("P01"), "member", lambda _i: "approved")
+    p.start()
+    p.handle(Interpretation(intent="make_request", request_types=("balance_inquiry",)))
+    p.handle(identity_utterance(stated_dob="1991-01-01"))
+    turn = p.handle(identity_utterance())
+    assert p.case.outcome == "verified_handoff" and turn.done
 
 
 def test_row2_subject_not_found_is_high():
@@ -99,9 +116,17 @@ def test_row7_calling_number_no_record_requires_step_up_and_flag():
 
 
 @pytest.mark.parametrize("app", ["denied", "timeout"])
-def test_row8_app_denied_or_timeout_is_high(app):
-    case, _ = call(FixtureFacts("P01"), app=app, then=[Interpretation(intent="confirm_approval")])
+def test_row8_app_denied_or_timeout_with_reverse_phone_mismatch_is_high(app):
+    case, _ = call(FixtureFacts("P01"), calling_from="other", app=app,
+                   then=[Interpretation(intent="confirm_approval")])
     assert case.outcome == "escalated_high" and f"APP_APPROVAL_{app.upper()}" in case.reasons
+
+
+@pytest.mark.parametrize("app", ["denied", "timeout"])
+def test_row8_app_denied_or_timeout_without_reverse_mismatch_is_unverified_medium(app):
+    case, _ = call(FixtureFacts("P01"), app=app, then=[Interpretation(intent="confirm_approval")])
+    assert case.outcome == "unverified_handoff" and case.risk_level == "MEDIUM"
+    assert f"APP_APPROVAL_{app.upper()}" in case.reasons
 
 
 def test_row8_redirect_to_new_number_is_high():
@@ -180,3 +205,109 @@ def test_interpreter_distinguishes_llm_down_from_invalid_output():
     with pytest.raises(LLMError):
         interpreter.interpret(_BrokenLLM(), "hello", "collect_identity")
     assert interpreter.interpret(_GarbageLLM(), "hello", "collect_identity") is None
+
+
+# -- keypad and name matching -------------------------------------------------------
+def keypad_policy(facts=None):
+    p = Policy(FAKE, facts or FixtureFacts("P01"), "member", lambda _i: "approved", keypad_mode=True)
+    p.start()
+    p.handle(Interpretation(intent="make_request", request_types=("balance_inquiry",)))
+    return p
+
+
+def type_all(p, dob="01021990", zip_="90210", ssn="4321"):
+    p.provide_typed("dob", dob)
+    p.provide_typed("zip", zip_)
+    return p.provide_typed("ssn_last4", ssn)
+
+
+def test_keypad_requests_one_field_at_a_time_in_order():
+    p = keypad_policy()
+    assert p.handle(Interpretation(intent="provide_info")).expect == "name"
+    t = p.handle(Interpretation(stated_name="Test Person"))
+    assert (t.message_id, t.expect) == ("ask_dob", "dob")
+    t = p.provide_typed("dob", "01021990")
+    assert (t.message_id, t.expect) == ("ask_zip", "zip")
+    t = p.provide_typed("zip", "90210")
+    assert (t.message_id, t.expect) == ("ask_ssn4", "ssn_last4")
+    assert p.provide_typed("ssn_last4", "4321").done and p.case.outcome == "verified_handoff"
+
+
+def test_keypad_mode_ignores_digits_the_interpreter_heard():
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name="Test Person", stated_dob="1990-01-02", stated_zip="90210",
+                            stated_ssn_last4="4321"))
+    assert set(p.case.stated) == {"name"}
+    assert p.expected_field() == "dob"
+
+
+def test_keypad_rejects_malformed_entries_without_counting_a_failure():
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name="Test Person"))
+    assert p.provide_typed("dob", "13452020").expect == "dob"  # month 13
+    assert p.provide_typed("dob", "0102").expect == "dob"  # too short
+    assert p.provide_typed("zip", "90210").expect == "dob"  # not the field being asked for
+    assert p._identity_failures == 0
+
+
+def test_keypad_wrong_dob_twice_ends_unverified_handoff_medium():
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name="Test Person"))
+    t = type_all(p, dob="01021991")
+    assert t.message_id == "ask_reenter" and t.expect == "name"
+    p.handle(Interpretation(stated_name="Test Person"))
+    t = type_all(p, dob="01021991")
+    assert t.done and p.case.outcome == "unverified_handoff" and p.case.risk_level == "MEDIUM"
+    assert p.case.reasons.count("IDENTITY_NOT_CONFIRMED") == 1
+
+
+@pytest.mark.parametrize("spoken", ["TEST PERSON", "  test   person ", "Tést Pérson"])
+def test_name_exact_after_normalizing_case_accents_spaces(spoken):
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name=spoken))
+    type_all(p)
+    assert p.case.outcome == "verified_handoff" and "NAME_FUZZY_MATCH" not in p.case.reasons
+
+
+def test_misheard_surname_with_exact_digits_passes_with_fuzzy_reason():
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name="Test Persun"))
+    type_all(p)
+    assert p.case.outcome == "verified_handoff" and "NAME_FUZZY_MATCH" in p.case.reasons
+
+
+def test_fuzzy_name_never_helps_when_a_digit_is_wrong():
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name="Test Persun"))
+    t = type_all(p, ssn="4322")
+    assert t.message_id == "ask_reenter" and not p.case.verified and "NAME_FUZZY_MATCH" not in p.case.reasons
+
+
+def test_clearly_different_name_with_exact_digits_is_not_a_match():
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name="Wholly Different"))
+    t = type_all(p)
+    assert t.message_id == "ask_reenter" and not p.case.verified
+
+
+def test_jaro_winkler_threshold_behaviour():
+    from guardline.policy import FUZZY_NAME_THRESHOLD, jaro_winkler, normalize_name
+    assert FUZZY_NAME_THRESHOLD == 0.88
+    assert jaro_winkler("abc", "abc") == 1.0
+    assert jaro_winkler(normalize_name("Test Persun"), normalize_name("Test Person")) >= 0.88
+    assert jaro_winkler("test person", "wholly different") < 0.88
+
+
+def test_p13_still_escalated_high_through_keypad():
+    p = keypad_policy(FixtureFacts("P13"))
+    p.handle(Interpretation(stated_name="Test Person"))
+    type_all(p)
+    assert p.case.outcome == "escalated_high" and "CRS_IDENTITY_MISMATCH_OR_SYNTHETIC" in p.case.reasons
+
+
+def test_typed_values_never_reach_the_public_case_file():
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name="Test Person"))
+    type_all(p)
+    blob = str(p.case.public())
+    assert not any(v in blob for v in ("1990-01-02", "90210", "4321"))

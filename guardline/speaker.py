@@ -8,6 +8,11 @@ from guardline.llm import LLM, LLMError
 TEMPLATES = {
     "greet": "Thank you for calling. To get started, how can I help you today?",
     "ask_identity": "To protect your account, please tell me your full name, date of birth, ZIP code and the last four digits of your Social Security number.",
+    "ask_name": "To protect your account, please say your full name.",
+    "ask_dob": "Thank you. Please enter your date of birth on the keypad: month, day, then four-digit year.",
+    "ask_zip": "Now please enter your five-digit ZIP code on the keypad.",
+    "ask_ssn4": "Finally, please enter the last four digits of your Social Security number on the keypad.",
+    "ask_reenter": "I could not confirm those details. Let us try once more. Please say your full name.",
     "ask_app_approval": "I have sent an approval request to your banking app. Please approve it, then tell me when you are done.",
     "ask_request": "Thank you. What would you like help with today?",
     "ask_repeat": "Sorry, I did not catch that. Could you say it again?",
