@@ -1,0 +1,572 @@
+[
+  {
+    "id": "L1",
+    "group": "legit",
+    "persona": "P01",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "L2",
+    "group": "legit",
+    "persona": "P02",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "L3",
+    "group": "legit",
+    "persona": "P03",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "L4",
+    "group": "legit",
+    "persona": "P10",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "L5",
+    "group": "legit",
+    "persona": "P19",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "L6",
+    "group": "legit",
+    "persona": "P01",
+    "language": "es",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 8
+  },
+  {
+    "id": "L7",
+    "group": "legit",
+    "persona": "P02",
+    "language": "es",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 2
+  },
+  {
+    "id": "L8",
+    "group": "legit",
+    "persona": "P19",
+    "language": "es",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 2
+  },
+  {
+    "id": "L9",
+    "group": "legit",
+    "persona": "P01",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "NAME_FUZZY_MATCH",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "L10",
+    "group": "legit",
+    "persona": "P10",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "NAME_FUZZY_MATCH",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "L11",
+    "group": "legit",
+    "persona": "P03",
+    "language": "es",
+    "calling_from": "member",
+    "expected": "unverified_handoff",
+    "actual": "unverified_handoff",
+    "risk": "MEDIUM",
+    "reasons": [
+      "CALLER_REQUESTED_HUMAN"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 2
+  },
+  {
+    "id": "L12",
+    "group": "legit",
+    "persona": "P02",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "IDENTITY_REENTRY_REQUESTED",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 4
+  },
+  {
+    "id": "L13",
+    "group": "legit",
+    "persona": "P19",
+    "language": "en",
+    "calling_from": "other",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "L14",
+    "group": "legit",
+    "persona": "P10",
+    "language": "en",
+    "calling_from": "other",
+    "expected": "unverified_handoff",
+    "actual": "ended_safe",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "CALLER_ENDED_CALL"
+    ],
+    "flags": [],
+    "pass": false,
+    "llm_calls": 3
+  },
+  {
+    "id": "L15",
+    "group": "legit",
+    "persona": "P16",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "verified_handoff",
+    "actual": "verified_handoff",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "CRS_FRAUD_ALERT",
+      "STEP_UP_REQUIRED",
+      "APP_APPROVED_SIMULATED",
+      "VERIFIED",
+      "HANDOFF_WITH_REQUEST"
+    ],
+    "flags": [
+      "FRAUD_ALERT",
+      "HUMAN_REVIEW"
+    ],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "A1",
+    "group": "impostor",
+    "persona": "P01",
+    "language": "en",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "REDIRECT_TO_NEW_NUMBER"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "A2",
+    "group": "impostor",
+    "persona": "P02",
+    "language": "en",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "REDIRECT_TO_NEW_NUMBER"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "A3",
+    "group": "impostor",
+    "persona": "P10",
+    "language": "es",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "REDIRECT_TO_NEW_NUMBER"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 4
+  },
+  {
+    "id": "A4",
+    "group": "impostor",
+    "persona": "P19",
+    "language": "es",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "REDIRECT_TO_NEW_NUMBER"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "A5",
+    "group": "impostor",
+    "persona": "P01",
+    "language": "en",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "CONTACT_CHANGE_WITH_MONEY_OR_CREDENTIALS"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 1
+  },
+  {
+    "id": "A6",
+    "group": "impostor",
+    "persona": "P19",
+    "language": "en",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "CONTACT_CHANGE_WITH_MONEY_OR_CREDENTIALS"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 1
+  },
+  {
+    "id": "A7",
+    "group": "impostor",
+    "persona": "P02",
+    "language": "en",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "ended_safe",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "CALLER_ENDED_CALL"
+    ],
+    "flags": [],
+    "pass": false,
+    "llm_calls": 3
+  },
+  {
+    "id": "A8",
+    "group": "impostor",
+    "persona": "P10",
+    "language": "en",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "ended_safe",
+    "risk": "LOW",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "CALLER_ENDED_CALL"
+    ],
+    "flags": [],
+    "pass": false,
+    "llm_calls": 3
+  },
+  {
+    "id": "A9",
+    "group": "impostor",
+    "persona": "P12",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "CRS_IDENTITY_MISMATCH_OR_SYNTHETIC",
+      "REVERSE_PHONE_NAME_DIFFERS"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 2
+  },
+  {
+    "id": "A10",
+    "group": "impostor",
+    "persona": "P13",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "CRS_IDENTITY_MISMATCH_OR_SYNTHETIC",
+      "REVERSE_PHONE_NO_RECORD"
+    ],
+    "flags": [
+      "NO_PHONE_RECORD"
+    ],
+    "pass": true,
+    "llm_calls": 2
+  },
+  {
+    "id": "A11",
+    "group": "impostor",
+    "persona": "P14",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "CRS_IDENTITY_MISMATCH_OR_SYNTHETIC",
+      "CRS_DECEASED_INDICATOR"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 2
+  },
+  {
+    "id": "A12",
+    "group": "impostor",
+    "persona": "P01",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "unverified_handoff",
+    "actual": "unverified_handoff",
+    "risk": "MEDIUM",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "IDENTITY_REENTRY_REQUESTED",
+      "IDENTITY_NOT_CONFIRMED"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 4
+  },
+  {
+    "id": "A13",
+    "group": "impostor",
+    "persona": "P02",
+    "language": "es",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "REVERSE_PHONE_NAME_DIFFERS",
+      "STEP_UP_REQUIRED",
+      "REDIRECT_TO_NEW_NUMBER",
+      "CONTACT_CHANGE_WITH_MONEY_OR_CREDENTIALS"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "A14",
+    "group": "impostor",
+    "persona": "P10",
+    "language": "en",
+    "calling_from": "member",
+    "expected": "unverified_handoff",
+    "actual": "unverified_handoff",
+    "risk": "MEDIUM",
+    "reasons": [
+      "CONTACT_CHANGE_STEP_UP",
+      "IDENTITY_REENTRY_REQUESTED",
+      "IDENTITY_NOT_CONFIRMED"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 3
+  },
+  {
+    "id": "A15",
+    "group": "impostor",
+    "persona": "P01",
+    "language": "es",
+    "calling_from": "other",
+    "expected": "escalated_high",
+    "actual": "escalated_high",
+    "risk": "HIGH",
+    "reasons": [
+      "REDIRECT_TO_NEW_NUMBER"
+    ],
+    "flags": [],
+    "pass": true,
+    "llm_calls": 2
+  }
+]
