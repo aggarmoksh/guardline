@@ -5,8 +5,12 @@ description = "Phone-line fraud triage for a credit union (sandbox data only)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic>=2.3.0",
+    "cartesia>=4.2.0",
+    "fastapi>=0.162.0",
     "httpx>=0.27",
     "python-dotenv>=1.0",
+    "python-multipart>=0.0.32",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]

@@ -34,7 +34,7 @@ class LLM:
         """One forced tool call; returns the tool input dict."""
         try:
             resp = self._client.messages.create(
-                model=self.model, max_tokens=400, system=system,
+                model=self.model, max_tokens=400, system=system, thinking={"type": "disabled"},
                 messages=[{"role": "user", "content": user}],
                 tools=[tool], tool_choice={"type": "tool", "name": tool["name"]},
             )
@@ -49,7 +49,7 @@ class LLM:
     def complete(self, system: str, user: str, max_tokens: int = 120) -> str:
         try:
             resp = self._client.messages.create(
-                model=self.model, max_tokens=max_tokens, system=system,
+                model=self.model, max_tokens=max_tokens, system=system, thinking={"type": "disabled"},
                 messages=[{"role": "user", "content": user}],
             )
         except Exception as e:

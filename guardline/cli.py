@@ -5,7 +5,7 @@ from pathlib import Path
 
 from guardline import interpreter, speaker
 from guardline.facts import LiveFacts
-from guardline.llm import LLM
+from guardline.llm import LLM, LLMError
 from guardline.members import load_members
 from guardline.policy import Policy
 from guardline.redact import redact, register_sensitive
@@ -42,8 +42,11 @@ def run(args) -> dict:
     for line in _caller_lines(args.script, member):
         if args.script:
             print("Caller:", line)  # the caller's own words
-        it = interpreter.interpret(llm, line, policy.case.state)
-        turn = policy.repeat_needed() if it is None else policy.handle(it)
+        try:
+            it = interpreter.interpret(llm, line, policy.case.state)
+            turn = policy.repeat_needed() if it is None else policy.handle(it)
+        except LLMError:
+            turn = policy.llm_unavailable()
         agent(turn.message_id)
         if turn.done:
             break

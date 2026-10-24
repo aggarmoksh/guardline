@@ -11,7 +11,7 @@ from guardline.facts import Facts
 from guardline.members import Member
 
 STATES = ("greet", "collect_identity", "crs_checks", "step_up", "request", "outcome")
-OUTCOMES = ("verified_handoff", "escalated_high", "ended_safe")
+OUTCOMES = ("verified_handoff", "unverified_handoff", "escalated_high", "ended_safe")
 
 CONTACT_CHANGES = frozenset({"change_mailing_address", "change_email", "change_phone"})
 MONEY_OR_CREDENTIALS = frozenset({"move_money", "reset_credentials"})
@@ -141,9 +141,10 @@ def _norm_name(s: str) -> list[str]:
 
 class Policy:
     def __init__(self, member: Member, facts: Facts, calling_from: str,
-                 request_app_approval: Callable[[str], str], language: str = "en"):
+                 request_app_approval: Callable[[str], str], language: str = "en", lock_language: bool = True):
         self.member, self.facts, self.calling_from = member, facts, calling_from
         self._approve = request_app_approval
+        self.lock_language = lock_language  # the caller-set language chip wins over per-utterance detection
         self.case = Case("case-" + "".join(secrets.choice("abcdefghijklmnop") for _ in range(8)), language)
         self._signals = Signals()
         self._unclear = 0
@@ -160,11 +161,16 @@ class Policy:
             return self._finish("ended_safe", "TOO_MANY_UNCLEAR_TURNS", "end_safe")
         return Turn("ask_repeat")
 
+    def llm_unavailable(self) -> Turn:
+        """The interpreter's LLM call failed: end safely and hand to a human. Never 'please repeat'."""
+        self.case.flags.append("ESCALATED_TO_HUMAN")
+        return self._finish("ended_safe", "LLM_UNAVAILABLE", "llm_down")
+
     def handle(self, it: Interpretation) -> Turn:
         c = self.case
         if c.outcome:
             return Turn("call_over", True)
-        if it.language in ("en", "es"):
+        if it.language in ("en", "es") and not self.lock_language:
             c.language = it.language
         c.request_types.update(it.request_types)
         if it.new_contact_value:
@@ -263,8 +269,8 @@ class Policy:
     def _escalate_or_handoff(self, code: str) -> Turn:
         if self.case.verified:
             return self._finish("verified_handoff", code, "handoff")
-        self.case.risk_level = "HIGH"
-        return self._finish("escalated_high", code, "escalate")
+        self.case.risk_level = "MEDIUM"  # unverified, but nothing says the caller is hostile
+        return self._finish("unverified_handoff", code, "escalate")
 
     def _finish(self, outcome: str, reason: str | None, message_id: str) -> Turn:
         c = self.case

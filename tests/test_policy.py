@@ -145,3 +145,38 @@ def test_goodbye_ends_safe_and_unclear_x3_ends_safe():
     p.start()
     turns = [p.repeat_needed() for _ in range(3)]
     assert turns[-1].done and p.case.outcome == "ended_safe"
+
+
+def test_human_request_before_verification_is_unverified_handoff_medium():
+    p = Policy(FAKE, FixtureFacts("P01"), "member", lambda _i: "approved")
+    p.start()
+    turn = p.handle(Interpretation(intent="ask_human"))
+    assert turn.done and p.case.outcome == "unverified_handoff"
+    assert p.case.risk_level == "MEDIUM" and "CALLER_REQUESTED_HUMAN" in p.case.reasons
+
+
+def test_llm_failure_ends_safe_with_escalation_not_repeat():
+    p = Policy(FAKE, FixtureFacts("P01"), "member", lambda _i: "approved")
+    p.start()
+    turn = p.llm_unavailable()
+    assert turn.done and turn.message_id == "llm_down" and p.case.outcome == "ended_safe"
+    assert "LLM_UNAVAILABLE" in p.case.reasons and "ESCALATED_TO_HUMAN" in p.case.flags
+
+
+class _BrokenLLM:
+    def forced_tool_call(self, *a, **k):
+        from guardline.llm import LLMError
+        raise LLMError("down")
+
+
+class _GarbageLLM:
+    def forced_tool_call(self, *a, **k):
+        return {"intent": "not_an_intent", "language": "en", "request_types": []}
+
+
+def test_interpreter_distinguishes_llm_down_from_invalid_output():
+    from guardline import interpreter
+    from guardline.llm import LLMError
+    with pytest.raises(LLMError):
+        interpreter.interpret(_BrokenLLM(), "hello", "collect_identity")
+    assert interpreter.interpret(_GarbageLLM(), "hello", "collect_identity") is None

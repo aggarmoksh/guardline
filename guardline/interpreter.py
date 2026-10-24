@@ -5,7 +5,7 @@ and the policy asks the caller to repeat.
 """
 import re
 
-from guardline.llm import LLM, LLMError
+from guardline.llm import LLM
 from guardline.policy import Interpretation
 
 INTENTS = ["provide_info", "make_request", "ask_human", "goodbye", "confirm_approval", "unclear"]
@@ -73,8 +73,9 @@ def validate(raw: dict) -> Interpretation:
 
 
 def interpret(llm: LLM, utterance: str, state: str) -> Interpretation | None:
+    """None means the model output was invalid (ask the caller to repeat). LLMError propagates: the LLM is down."""
+    raw = llm.forced_tool_call(SYSTEM, f"Call state: {state}\nCaller said: {utterance}", TOOL)
     try:
-        raw = llm.forced_tool_call(SYSTEM, f"Call state: {state}\nCaller said: {utterance}", TOOL)
         return validate(raw)
-    except (LLMError, ValueError, TypeError):
+    except (ValueError, TypeError):
         return None

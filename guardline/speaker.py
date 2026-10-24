@@ -14,6 +14,7 @@ TEMPLATES = {
     "handoff": "Thank you. I am passing you to a team member with your request now.",
     "escalate": "I am going to bring in a colleague who will help you from here.",
     "end_safe": "Thank you for calling. Goodbye.",
+    "llm_down": "I am sorry, I am having a technical problem. I am connecting you to a colleague now.",
     "call_over": "This call has ended.",
 }
 LANG_NAMES = {"en": "English", "es": "Spanish"}
@@ -21,12 +22,25 @@ SYSTEM = ("Translate the sentence into the requested language for a phone call. 
           "add nothing, and reply with one short sentence only.")
 
 
+_cache: dict[tuple[str, str], str] = {}  # message_id is a fixed sentence, so a rendering is reusable
+
+
 def render(llm: LLM | None, message_id: str, language: str) -> str:
     template = TEMPLATES[message_id]
     if language == "en" or llm is None:
         return template
+    if (message_id, language) in _cache:
+        return _cache[(message_id, language)]
     try:
         out = llm.complete(SYSTEM, f"Language: {LANG_NAMES[language]}\nSentence: {template}")
     except LLMError:
+        return template  # not cached, so a later call can retry
+    if not 0 < len(out) <= 300:
         return template
-    return out if 0 < len(out) <= 300 else template
+    _cache[(message_id, language)] = out
+    return out
+
+
+def prewarm(llm: LLM, language: str = "es") -> None:
+    for message_id in TEMPLATES:
+        render(llm, message_id, language)
