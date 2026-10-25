@@ -13,10 +13,11 @@ cd "$ROOT" || exit 1
 CLOUDFLARED='C:\Program Files (x86)\cloudflared\cloudflared.exe'
 [ -f "/c/Program Files (x86)/cloudflared/cloudflared.exe" ] || CLOUDFLARED='cloudflared'
 
-ps() { powershell.exe -NoProfile -NonInteractive -Command "$1"; }
+# stdin/stdout are detached so the child processes never hold this script's pipe open
+ps() { powershell.exe -NoProfile -NonInteractive -Command "$1" </dev/null >/dev/null 2>&1; }
 
 echo "1/6 stopping old processes (API, web, tunnels)"
-ps 'Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force; foreach ($p in 8000,3000) { Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force } }' >/dev/null 2>&1
+ps 'Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force; foreach ($p in 8000,3000) { Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force } }'
 sleep 1
 rm -f "$LOGS/tunnel_api.err" "$LOGS/tunnel_web.err"
 
