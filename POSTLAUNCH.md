@@ -10,3 +10,8 @@ Deferred ideas go here.
 - **Outbound callback calls:** the case file records CALLBACK_QUEUED and the member app shows a simulated notice. A real callback would be an outbound Line call to the number on file (US numbers only), triggered by the human who picks up the case.
 - **Names on the phone line:** guard the Line model's words in code (today only the web speaker has the guard); needs a Line feature that lets the backend speak the final text, or a post-call audit of the transcript.
 - **Personalised greeting for a known number:** needs a ruling, because echoing the name confirms an on-file value.
+
+## From the hve-core review of guardline/policy.py (docs/hve-core-review.md)
+
+- The review reported no security vulnerabilities, so there was nothing to fix and no code changed.
+- Its summary did not include a correctness assessment, so correctness is not independently cleared by that review. Follow-up: a separate correctness review of `guardline/policy.py` (state transitions, the late-request step-up path, the abandon and idle rules), ideally with property-style tests over the policy table.
