@@ -53,26 +53,33 @@ export default function MemberApp() {
     if (alertsRef.current) ring();
   }, []);
 
+  const lastCase = useRef("");
   useEffect(() => {
+    // Polling is the fallback: quick tunnels do not carry server-sent events.
     const load = async () => {
       try {
         const r = await (await fetch("/api/approval")).json();
         offset.current = r.now - Date.now() / 1000;
-        if (r.pending) show(r);
+        if (r.pending && r.case_id !== lastCase.current) {
+          lastCase.current = r.case_id;
+          show(r);
+        } else if (!r.pending) {
+          setReq(null);
+        }
       } catch {}
     };
     load();
+    const poll = setInterval(load, 1500);
     const es = new EventSource("/api/events");
     es.onmessage = (m) => {
       const ev = JSON.parse(m.data);
       if (ev.type === "approval_requested") {
         load();
-        show(ev);
       } else if (ev.type === "approval_resolved" || ev.type === "approval_cancelled") {
         setReq((cur) => (cur && cur.case_id === ev.case_id ? null : cur));
       }
     };
-    return () => es.close();
+    return () => { es.close(); clearInterval(poll); };
   }, [show]);
 
   useEffect(() => {

@@ -45,6 +45,7 @@ export default function Call() {
   const [typed, setTyped] = useState("");
   const [caseIdShown, setCaseIdShown] = useState("");
   const caseId = useRef("");
+  const awaitingRef = useRef(false);
   const stream = useRef<MediaStream | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
@@ -60,7 +61,13 @@ export default function Call() {
       const r = await (await fetch(`/api/call/${caseId.current}/result`)).json();
       if (r.agent_text) await applyResp(r);
     };
-    return () => es.close();
+    // Quick tunnels do not carry server-sent events, so also poll while the call is waiting on the member app.
+    const poll = setInterval(async () => {
+      if (!awaitingRef.current) return;
+      const r = await (await fetch(`/api/call/${caseId.current}/result`)).json();
+      if (r.agent_text) await applyResp(r);
+    }, 1500);
+    return () => { es.close(); clearInterval(poll); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [started]);
 
@@ -74,6 +81,7 @@ export default function Call() {
     setLines((x) => [...x, { who: "agent", text: r.agent_text }]);
     setOutcome(r.outcome);
     setAwaiting(r.awaiting_approval);
+    awaitingRef.current = r.awaiting_approval;
     setExpect(r.expect ?? null);
     setTyped("");
     if (r.agent_audio) await playBase64Wav(r.agent_audio);

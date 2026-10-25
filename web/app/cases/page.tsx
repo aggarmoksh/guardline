@@ -103,7 +103,13 @@ export default function Cases() {
         setCases((cur) => [ev.case, ...cur.filter((c) => c.case_id !== ev.case.case_id)].sort((a, b) => b.created_at - a.created_at));
       };
     })();
-    return () => es?.close();
+    const poll = setInterval(async () => {  // fallback: quick tunnels do not carry server-sent events
+      try {
+        const r = await fetch(`/api/cases?key=${encodeURIComponent(key)}`);
+        if (r.ok) { const d = await r.json(); setCases(d.cases); setStats(d.stats); }
+      } catch {}
+    }, 3000);
+    return () => { es?.close(); clearInterval(poll); };
   }, [key]);
 
   useEffect(() => {
