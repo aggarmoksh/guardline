@@ -541,10 +541,10 @@ def _line_hear(sess: Session, value: str) -> dict:
 
 def _line_confirm(sess: Session, answer: bool) -> dict:
     st, ph = sess.line, line.PHRASES[sess.line.language]
-    again = ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[st.collecting]]
     if not answer:
         st.pending = None
-        return _line_text(sess, again, {"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[st.collecting])
+        ask = ph[{"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[st.collecting]]
+        return _line_text(sess, ask, "digit_wrong")  # just the question again, not "I did not catch that"
     t = sess.policy.provide_typed(st.collecting, st.pending)
     _after_change(sess)
     return _line_turn_result(sess, t)

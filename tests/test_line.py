@@ -269,3 +269,23 @@ def test_the_approval_reply_names_no_outcome_and_asks_the_member_to_use_the_app(
     r = to_step_up(client, "c-appr")
     assert r["state"] == "step_up" and r["continue"] is True and "approved" in r["intent"].lower()
     assert "do not say it was approved" in r["intent"].lower() and "app" in r["must_ask"].lower()
+
+
+def test_a_no_to_a_readback_asks_just_the_question_again_without_i_did_not_catch_that(client):
+    say(client, "c-wrong", "I need to change my mailing address.")
+    say(client, "c-wrong", "My name is Test Person.")
+    say(client, "c-wrong", "zero one zero two one nine nine zero")
+    r = say(client, "c-wrong", "no")
+    assert r["say_fallback"] == line.PHRASES["en"]["ask_dob"] and "catch" not in r["say_fallback"]
+    assert r["must_ask"] == line.PHRASES["en"]["ask_dob"] and "wrong" in r["intent"]
+
+
+def test_a_call_with_no_stated_request_is_asked_what_it_needs_after_verification(client):
+    # the model tags every plain answer with request type "other"; that must not count as a request
+    say(client, "c-norq", "Hi.")
+    say(client, "c-norq", "My name is Test Person.")
+    for spoken in ("zero one zero two one nine nine zero", "nine zero two one zero", "four three two one"):
+        say(client, "c-norq", spoken)
+        r = say(client, "c-norq", "yes")
+    assert r["state"] == "request" and "help" in r["must_ask"].lower() and not r["end_call"]
+    assert case_rows()[0]["outcome"] is None

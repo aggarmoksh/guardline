@@ -296,6 +296,9 @@ def main_rerun(tag: str = "4afix", natural: bool = False) -> None:
 
 
 def main() -> None:
+    if "--rerun-4e2" in sys.argv:
+        main_rerun("4e2", natural=True)
+        return
     if "--rerun-4e" in sys.argv:
         main_rerun("4e", natural=True)
         return

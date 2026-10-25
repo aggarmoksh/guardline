@@ -43,7 +43,7 @@ TOOL = {
 SYSTEM = (
     "You transcribe intent for a credit union phone line. Call the tool exactly once. "
     "Only fill fields the caller explicitly stated in this utterance; use null otherwise. "
-    "Never guess or infer missing details. Normalize a spoken date of birth to YYYY-MM-DD. "
+    "Never guess or infer missing details. Use request type other only when the caller clearly asks for something; a greeting, a name, digits or yes/no has no request. Normalize a spoken date of birth to YYYY-MM-DD. "
     "The caller may speak English or Spanish."
 )
 
@@ -69,6 +69,8 @@ def validate(raw: dict) -> Interpretation:
     tactics = raw.get("tactics", [])
     if not isinstance(tactics, list) or any(t not in TACTICS for t in tactics):
         raise ValueError
+    if raw["intent"] != "make_request":  # the model tags plain answers (yes, digits, a name) with "other": that is noise
+        reqs = [r for r in reqs if r != "other"]
     return Interpretation(
         tactics=tuple(dict.fromkeys(t for t in tactics if t != "none")),
         intent=raw["intent"], language=raw["language"],

@@ -15,8 +15,8 @@ GUARD_STATS: Counter = Counter()  # rejected replies by reason, for the logs and
 # message_id -> (intent: what must be conveyed, no member data; must_ask: the exact question needed next, or None)
 INTENTS: dict[str, tuple[str, str | None]] = {
     "greet": ("Welcome the caller warmly to the credit union phone line.", "How can I help you today?"),
-    "ask_name": ("Say you need to confirm who they are before you can help with an account request.", "What is your full name?"),
-    "ask_dob": ("Thank them. This is part of confirming who they are.", "What is your date of birth: month, day and four-digit year?"),
+    "ask_name": ("Say you need to confirm who they are before you can help with an account request. These are the caller's own details.", "What is your full name?"),
+    "ask_dob": ("Thank them. This is part of confirming who they are, using the caller's own details.", "What is your date of birth: month, day and four-digit year?"),
     "ask_zip": ("Thank them. This is part of confirming who they are.", "What is your five-digit ZIP code?"),
     "ask_ssn4": ("Thank them. This is part of confirming who they are.", "What are the last four digits of your Social Security number?"),
     "ask_reenter": ("The details did not match. Do not say which part. Offer one more try.", "What is your full name?"),
@@ -32,6 +32,7 @@ INTENTS: dict[str, tuple[str, str | None]] = {
     "call_over": ("The call has ended.", None),
     # phone line only: the digit read-back and the small prompts around it (the must_ask is the exact sentence)
     "heard": ("Read back exactly the digits the caller just said so they can confirm them. Do not change or add any digit.", None),
+    "digit_wrong": ("The caller said the digits you read back were wrong. Ask for that item again, briefly and kindly.", None),
     "yes_no": ("You need a yes or a no.", None),
     "retry": ("You did not catch that.", None),
     "fallback": ("A colleague will take over from here. Apologise briefly and give no reason.", None),

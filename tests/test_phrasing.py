@@ -124,3 +124,12 @@ def test_the_web_speaker_uses_natural_wording_and_falls_back_with_an_event(tmp_p
 def test_the_spanish_approval_reply_may_say_aplicacion():
     assert check("Le enviamos una solicitud a su aplicación bancaria. Por favor, ábrala y toque aprobar.",
                  message_id="ask_app_approval", language="es") is None
+
+
+def test_other_is_noise_unless_the_caller_makes_a_request():
+    from guardline import interpreter
+    base = {"language": "en", "redirect_to_new_number": False, "tactics": ["none"]}
+    assert interpreter.validate({**base, "intent": "provide_info", "request_types": ["other"]}).request_types == ()
+    assert interpreter.validate({**base, "intent": "confirm_approval", "request_types": ["other"]}).request_types == ()
+    assert interpreter.validate({**base, "intent": "make_request", "request_types": ["other"]}).request_types == ("other",)
+    assert interpreter.validate({**base, "intent": "provide_info", "request_types": ["change_phone"]}).request_types == ("change_phone",)
