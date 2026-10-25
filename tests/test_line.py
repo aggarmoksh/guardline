@@ -1,0 +1,210 @@
+"""POST /api/line/turn: the Line agent is a relay; state, verification and wording stay in the backend. No network, no LLM."""
+import json
+import logging
+import re
+import threading
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from guardline import api, db, line
+from guardline.facts import FixtureFacts
+from guardline.llm import LLMError
+from guardline.members import Member
+
+KNOWN_CALLER = "+1 (415) 555-0100"
+OTHER_CALLER = "+1 408 555 0111"
+TOKEN = "line-token"
+
+MEMBERS = {
+    "P01": Member("P01", "Test Person", "1990-01-02", "90210", "4321", "4155550100", "t@example.test"),
+    "P13": Member("P13", "Wholly Different", "1985-05-05", "11111", "1111", "4155550113", "w@example.test"),
+    "P16": Member("P16", "Another Name", "1975-07-07", "22222", "2222", "4155550116", "a@example.test"),
+}
+
+
+class FakeLLM:
+    def __init__(self):
+        self.fail = False
+
+    def forced_tool_call(self, system, user, tool):
+        if self.fail:
+            raise LLMError("down")
+        said = user.split("Caller said: ", 1)[1]
+        low = said.lower()
+        # like the real model, tag plain answers with request type "other"
+        out = {"intent": "provide_info", "language": "en", "request_types": ["other"], "redirect_to_new_number": False,
+               "tactics": ["none"]}
+        if "mailing address" in low:
+            out.update(request_types=["change_mailing_address"], intent="make_request")
+        if m := re.search(r"my name is ([\w' ]+)", said, re.I):
+            out["stated_name"] = m.group(1).strip()
+        if "new number" in low:
+            out["redirect_to_new_number"] = True
+        if low.strip() in ("yes", "no"):
+            out["intent"] = "confirm_approval"
+        if "bye" in low:
+            out["intent"] = "goodbye"
+        return out
+
+    def complete(self, system, user, max_tokens=120):
+        return "ES: " + user.split("Sentence: ", 1)[1]
+
+
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    db.engine(tmp_path / "line.db")
+    fake = FakeLLM()
+    monkeypatch.setenv("LINE_PROBE_TOKEN", TOKEN)
+    monkeypatch.setenv("LINE_SPANISH_NUMBER", "+1 361 555 0199")
+    monkeypatch.setattr(api, "_llm", fake)
+    monkeypatch.setattr(api, "load_members", lambda: MEMBERS)
+    monkeypatch.setattr(api, "make_facts", lambda persona, member, caller: FixtureFacts(persona))
+    monkeypatch.setattr(api, "_leak_values", None)
+    api._sessions.clear()
+    api._line_sessions.clear()
+    c = TestClient(api.app)
+    c.fake = fake
+    yield c
+    api._sessions.clear()
+    api._line_sessions.clear()
+    db._engine = None
+
+
+def say(client, conv, utterance, caller=KNOWN_CALLER, called="+13613138909"):
+    r = client.post("/api/line/turn", json={"line_token": TOKEN, "conversation_id": conv, "caller_id": caller,
+                                            "called_number": called, "utterance": utterance})
+    assert r.status_code == 200
+    return r.json()
+
+
+def to_step_up(client, conv, caller=KNOWN_CALLER, name="Test Person"):
+    say(client, conv, "I need to change my mailing address.", caller)
+    r = say(client, conv, f"My name is {name}.", caller)
+    assert r["say"] == line.PHRASES["en"]["ask_dob"]
+    for spoken, heard in (("zero one zero two one nine nine zero", "0 1 0 2 1 9 9 0"),
+                          ("nine zero two one zero", "9 0 2 1 0"), ("four three two one", "4 3 2 1")):
+        r = say(client, conv, spoken, caller)
+        assert r["say"] == f"I heard {heard}. Is that right?"
+        r = say(client, conv, "yes", caller)
+    return r
+
+
+def case_rows():
+    return db.list_cases()
+
+
+def test_known_number_is_the_candidate_and_the_call_goes_through_approval_to_handoff(client):
+    r = to_step_up(client, "c-known")
+    assert r["continue"] is True and not r["end_call"] and "approval request" in r["say"]
+    [row] = case_rows()
+    assert row["persona"] == "P01" and row["known_number"] is True and row["channel"] == "line"
+    approved = client.post("/api/approval", json={"case_id": row["case_id"], "decision": "approved"})
+    assert approved.json() == {"ok": True}
+    done = say(client, "c-known", "")  # the continuation call returns the final words
+    assert done["end_call"] is True and done["continue"] is False and "team member" in done["say"]
+    [row] = case_rows()
+    assert row["outcome"] == "verified_handoff" and row["verified"] is True
+    assert {e["product"] for e in row["evidence"]} == {"TransUnion identity verification", "AccurateAppend reverse phone"}
+
+
+def test_the_held_turn_waits_for_the_approval_and_returns_when_it_arrives(client):
+    to_step_up(client, "c-wait")
+    [row] = case_rows()
+    result = {}
+    t = threading.Thread(target=lambda: result.update(say(client, "c-wait", "")))
+    t.start()
+    time.sleep(0.3)
+    assert t.is_alive()  # still holding the turn
+    client.post("/api/approval", json={"case_id": row["case_id"], "decision": "denied"})
+    t.join(timeout=10)
+    assert result["end_call"] is True
+    assert case_rows()[0]["outcome"] == "escalated_high" and "MEMBER_DENIED_CALL" in case_rows()[0]["reasons"]
+
+
+def test_unknown_number_picks_the_candidate_from_the_stated_name_and_gets_step_up(client):
+    r = to_step_up(client, "c-unknown", caller=OTHER_CALLER, name="Test Persun")
+    assert r["continue"] is True
+    [row] = case_rows()
+    assert row["persona"] == "P01" and row["known_number"] is False and row["calling_from"] == "other"
+    client.post("/api/approval", json={"case_id": row["case_id"], "decision": "approved"})
+    say(client, "c-unknown", "", caller=OTHER_CALLER)
+    [row] = case_rows()
+    assert "NAME_FUZZY_MATCH" in row["reasons"] and "REVERSE_PHONE_NAME_DIFFERS" in row["reasons"]
+
+
+def test_unknown_number_with_a_name_closest_to_another_demo_member(client):
+    say(client, "c-p13", "My name is Wholly Different.", caller=OTHER_CALLER)
+    assert case_rows()[0]["persona"] == "P13"
+
+
+def test_a_wrong_confirmation_asks_for_the_item_again(client):
+    say(client, "c-no", "I need to change my mailing address.")
+    say(client, "c-no", "My name is Test Person.")
+    r = say(client, "c-no", "zero one zero two one nine nine zero")
+    assert "Is that right?" in r["say"]
+    r = say(client, "c-no", "no")
+    assert r["say"].endswith(line.PHRASES["en"]["ask_dob"]) and not r["end_call"]
+    r = say(client, "c-no", "maybe")  # not usable as a date of birth either
+    assert r["say"] == line.PHRASES["en"]["retry"] + " " + line.PHRASES["en"]["ask_dob"]
+
+
+def test_redirect_during_digit_collection_escalates_immediately(client):
+    say(client, "c-redir", "I need to change my mailing address.", caller=OTHER_CALLER)
+    say(client, "c-redir", "My name is Test Person.", caller=OTHER_CALLER)
+    r = say(client, "c-redir", "Send it to my new number instead.", caller=OTHER_CALLER)
+    assert r["end_call"] is True
+    assert case_rows()[0]["outcome"] == "escalated_high" and "REDIRECT_TO_NEW_NUMBER" in case_rows()[0]["reasons"]
+
+
+def test_llm_failure_ends_safely_with_our_own_words(client):
+    client.fake.fail = True
+    r = say(client, "c-fail", "Hello, I need help.")
+    assert r["end_call"] is True and "technical problem" in r["say"]
+    assert case_rows()[0]["outcome"] == "ended_safe" and "LLM_UNAVAILABLE" in case_rows()[0]["reasons"]
+
+
+def test_any_other_failure_returns_the_fallback_sentence_and_ends(client, monkeypatch):
+    monkeypatch.setattr(api, "_line_turn", lambda body: (_ for _ in ()).throw(RuntimeError("boom")))
+    r = say(client, "c-boom", "hi")
+    assert r == {"say": line.PHRASES["en"]["fallback"], "end_call": True, "continue": False}
+    r = say(client, "c-boom", "hola", called="+1 361 555 0199")
+    assert r["say"] == line.PHRASES["es"]["fallback"]
+
+
+def test_the_token_is_required(client):
+    bad = client.post("/api/line/turn", json={"line_token": "nope", "conversation_id": "x", "utterance": "hi"})
+    assert bad.status_code == 401
+    assert client.post("/api/line/turn", json={"conversation_id": "x", "utterance": "hi"}).status_code == 401
+
+
+def test_the_spanish_number_gives_a_spanish_call(client):
+    r = say(client, "c-es", "I need to change my mailing address.", called="+1 (361) 555-0199")
+    assert r["say"].startswith("ES: ")
+    assert case_rows()[0]["language"] == "es"
+
+
+def test_the_caller_number_is_never_in_a_response_a_log_or_the_database(client, caplog):
+    caplog.set_level(logging.INFO)
+    responses = [to_step_up(client, "c-priv")]
+    responses.append(say(client, "c-priv", "I need help", caller=OTHER_CALLER))
+    blob = json.dumps(responses) + caplog.text + json.dumps(case_rows())
+    blob += json.dumps(client.get("/api/approval").json())
+    for number in ("4155550100", "4085550111", "+1 (415) 555-0100", "415-555-0100", "(415) 555"):
+        assert number not in blob
+    assert "5550100" not in blob and "0100" in caplog.text  # only the last 4 digits reach the log
+    sess = api._line_sessions["c-priv"]
+    assert sess.line.caller_digits == "4155550100"  # held in memory for the CRS lookup only
+
+
+def test_spoken_digit_helpers():
+    assert line.spoken_digits("oh one zero one") == "0101"
+    assert line.spoken_digits("my zip is 1 2 3 4 5.") == "12345"
+    assert line.spoken_digits("cero uno cero uno") == "0101"
+    assert line.item_digits("zip", "one two three four five") == "12345" and line.item_digits("zip", "95") is None
+    assert line.item_digits("ssn_last4", "six seven eight nine") == "6789"
+    assert line.item_digits("dob", "January 1st 1970", "1970-01-01") == "01011970"
+    assert line.item_digits("dob", "zero one zero one one nine seven zero") == "01011970"
+    assert line.yes_no("yes that is right") is True and line.yes_no("no") is False and line.yes_no("hmm") is None
+    assert line.yes_no("sí") is True and line.read_back("0101") == "0 1 0 1"

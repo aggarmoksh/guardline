@@ -44,7 +44,8 @@ def test_stored_case_has_only_code_fields(fresh_db):
     db.upsert_case(public("c1", "verified_handoff", verified=True, reasons=["VERIFIED"]), "member")
     [row] = db.list_cases()
     assert set(row) == {"case_id", "outcome", "risk", "verified", "language", "state", "calling_from", "reasons",
-                        "flags", "tactics", "evidence", "created_at", "updated_at", "ended_at", "persona"}
+                        "flags", "tactics", "evidence", "created_at", "updated_at", "ended_at", "persona", "channel",
+                        "known_number"}
 
 
 def test_counters_come_from_stored_rows(fresh_db):

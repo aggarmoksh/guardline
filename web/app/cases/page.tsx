@@ -11,6 +11,8 @@ type Case = {
   state: string;
   calling_from: "member" | "other";
   persona: string | null;
+  channel?: "web" | "line";
+  known_number?: boolean | null;
   evidence: { product: string; ran_at: number; result: string }[];
   reasons: string[];
   flags: string[];
@@ -166,7 +168,16 @@ export default function Cases() {
                 <span className={`text-sm font-semibold ${RISK_CLS[c.risk] ?? ""}`}>{c.risk} risk</span>
                 {c.persona && <span className="rounded bg-slate-700 px-2 py-0.5 text-xs font-semibold">Demo member {c.persona}</span>}
                 <span className="rounded bg-slate-800 px-2 py-0.5 text-xs">{c.language === "es" ? "Spanish" : "English"}</span>
-                <span className="rounded bg-slate-800 px-2 py-0.5 text-xs">{c.calling_from === "member" ? "member phone (sim.)" : "other phone (sim.)"}</span>
+                {c.channel === "line" ? (
+                  <>
+                    <span className="rounded bg-slate-800 px-2 py-0.5 text-xs">Phone line</span>
+                    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${c.known_number ? "bg-emerald-900" : "bg-amber-900"}`}>
+                      {c.known_number ? "Known number" : "Unknown number"}
+                    </span>
+                  </>
+                ) : (
+                  <span className="rounded bg-slate-800 px-2 py-0.5 text-xs">{c.calling_from === "member" ? "member phone (sim.)" : "other phone (sim.)"}</span>
+                )}
                 <span className="ml-auto text-xs opacity-60">{c.case_id.slice(-8)} · {ago(c.created_at, now)}</span>
               </div>
               {c.evidence?.length > 0 && (

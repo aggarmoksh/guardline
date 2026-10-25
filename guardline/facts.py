@@ -37,12 +37,14 @@ def _same_name(returned: list[tuple[str, str]], member_name: str) -> bool:
 
 
 class LiveFacts:
-    def __init__(self, persona_id: str, member_name: str):
+    def __init__(self, persona_id: str, member_name: str, caller_number: str | None = None):
+        """caller_number: the real caller ID (digits) for an unknown number on the phone line; kept in memory only."""
         from guardline.crs import CRSClient  # imported lazily so policy tests need no network stack
 
         self._crs = CRSClient()
         self._persona = json.loads((RAW / "personas.json").read_text(encoding="utf-8"))[persona_id]
         self._member_name = member_name
+        self._caller_number = caller_number
 
     def identity(self) -> IdentityFacts:
         r = self._crs.identity_verify(self._persona["identity"])
@@ -52,7 +54,10 @@ class LiveFacts:
         return IdentityFacts(tuple(s.alert_codes), s.verification_status, s.risk_indicator)
 
     def calling_from(self, kind: str) -> CallingFromFacts:
-        phone = self._persona["reverse_phone"]["phoneNumber"] if kind == "member" else MADE_UP_PHONE
+        if kind == "member":
+            phone = self._persona["reverse_phone"]["phoneNumber"]
+        else:
+            phone = self._caller_number or MADE_UP_PHONE  # the real number when the phone line supplied one
         r = self._crs.reverse_phone(phone)
         s = r.summary
         if s is None:
@@ -63,6 +68,22 @@ class LiveFacts:
         body = dict(self._persona["fraud_finder"], email=email)
         r = self._crs.fraud_finder(body)
         return bool(r.summary and r.summary.email_status == "valid")
+
+
+class DeferredFacts:
+    """Facts for a call whose member is not known yet (unknown number): the member is chosen once the caller says a name."""
+
+    def __init__(self) -> None:
+        self.inner: Facts | None = None
+
+    def identity(self) -> IdentityFacts:
+        return self.inner.identity()
+
+    def calling_from(self, kind: str) -> CallingFromFacts:
+        return self.inner.calling_from(kind)
+
+    def email_valid(self, email: str) -> bool:
+        return self.inner.email_valid(email)
 
 
 class FixtureFacts:

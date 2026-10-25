@@ -18,12 +18,12 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFil
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from guardline import db, interpreter, speaker
+from guardline import db, interpreter, line, speaker
 from guardline.broker import Broker
-from guardline.facts import LiveFacts
+from guardline.facts import DeferredFacts, LiveFacts
 from guardline.llm import LLM, LLMError
-from guardline.members import load_members
-from guardline.policy import Policy
+from guardline.members import Member, load_members
+from guardline.policy import CONTACT_CHANGES, MONEY_OR_CREDENTIALS, Policy
 from guardline.redact import get_logger, register_sensitive
 from guardline.speech import Speech, SpeechError, get_speech
 
@@ -56,8 +56,13 @@ class Session:
     requested_at: float = 0.0
     timer: threading.Timer | None = None
     advance_result: dict | None = None
+    channel: str = "web"  # web | line
+    known_number: bool | None = None
+    line: "line.LineState | None" = None
+    resolved: threading.Event = field(default_factory=threading.Event)  # set when the approval is answered or expires
 
 
+_line_sessions: dict[str, Session] = {}
 _sessions: dict[str, Session] = {}
 
 
@@ -127,7 +132,7 @@ def _leaks_member_value(text: str) -> bool:
     return any(v in low for v in _leak_values)
 
 
-def _speak(sess: Session, message_id: str) -> tuple[str, str | None, float, float]:
+def _speak(sess: Session, message_id: str, audio: bool = True) -> tuple[str, str | None, float, float]:
     """Returns (agent text, audio b64 or None, llm_ms, tts_ms). A leak guard checks every agent line."""
     lang = sess.policy.case.language
     t0 = time.perf_counter()
@@ -136,13 +141,15 @@ def _speak(sess: Session, message_id: str) -> tuple[str, str | None, float, floa
     if _leaks_member_value(text):  # should never happen: message ids are fixed sentences
         db.add_event(sess.policy.case.case_id, "pii_leak", message_id)
         text = speaker.TEMPLATES[message_id]
+    if not audio:  # the phone line speaks the text itself
+        return text, None, llm_ms, 0.0
     t0 = time.perf_counter()
     try:
-        audio = base64.b64encode(speech().synthesize(text, lang)).decode()
+        audio_b64 = base64.b64encode(speech().synthesize(text, lang)).decode()
     except SpeechError as e:
         log.warning("tts failed: %s", e)
-        audio = None
-    return text, audio, llm_ms, (time.perf_counter() - t0) * 1000
+        audio_b64 = None
+    return text, audio_b64, llm_ms, (time.perf_counter() - t0) * 1000
 
 
 def _public_state(sess: Session) -> dict:
@@ -161,7 +168,7 @@ def _approval_request(sess: Session) -> dict:
 def _after_change(sess: Session) -> None:
     """Persist the case file, announce a new approval request, close out an ended call, notify the dashboard."""
     c = sess.policy.case
-    rec = db.upsert_case(c.public(), sess.calling_from, sess.persona)
+    rec = db.upsert_case(c.public(), sess.calling_from, sess.persona, sess.channel, sess.known_number)
     if c.state == "step_up" and not sess.announced and sess.approval is None:
         sess.announced = True
         sess.requested_at = time.time()
@@ -194,10 +201,11 @@ def _resolve(sess: Session, decision: str) -> bool:
         broker.publish("public", {"type": "approval_resolved", "case_id": c.case_id, "decision": decision})
         t = sess.policy.advance_after_approval()
         if t:
-            text, audio, _, _ = _speak(sess, t.message_id)
+            text, audio, _, _ = _speak(sess, t.message_id, audio=sess.channel == "web")
             sess.advance_result = {"agent_text": text, "agent_audio": audio, "audio_mime": "audio/wav",
                                    "done": t.done, **_public_state(sess)}
         _after_change(sess)
+    sess.resolved.set()
     broker.publish("public", {"type": "turn_ready", "case_id": c.case_id})
     return True
 
@@ -404,6 +412,178 @@ def line_probe(body: LineProbe):
             w.writerow(["ts", "call_id_prefix", "caller_present", "caller_digits", "caller_last4"])
         w.writerow([int(time.time()), body.call_id[:12], bool(digits), len(digits), last4])
     return {"ok": True, "caller_received": bool(digits)}
+
+
+# -- Cartesia Line phone channel: the Line agent is a relay, our backend owns state, verification and wording ----------
+class LineTurn(BaseModel):
+    line_token: str = ""
+    conversation_id: str = ""
+    caller_id: str | None = None  # filled from system__caller_id; never visible to the Line model
+    called_number: str | None = None  # filled from system__called_number: tells us which language number was dialled
+    utterance: str = ""
+
+
+def _digits_only(number: str | None) -> str:
+    d = "".join(ch for ch in (number or "") if ch.isdigit())
+    return d[1:] if len(d) == 11 and d.startswith("1") else d
+
+
+def _line_language(called_number: str | None) -> str:
+    spanish = _digits_only(os.environ.get("LINE_SPANISH_NUMBER"))
+    return "es" if spanish and _digits_only(called_number) == spanish else "en"
+
+
+def make_facts(persona: str, member: Member, caller_number: str | None):
+    """Live CRS facts for a member; tests replace this with fixtures."""
+    return LiveFacts(persona, member.name, caller_number)
+
+
+def _create_line_session(body: LineTurn) -> Session:
+    members = load_members()
+    for m in members.values():
+        register_sensitive(m.sensitive_values())
+    language = _line_language(body.called_number)
+    caller = _digits_only(body.caller_id)
+    known = line.known_member(caller, members)
+    holder: dict[str, Session] = {}
+
+    def approval(_case_id: str) -> str:
+        return holder["s"].approval or "timeout"
+
+    facts = DeferredFacts()
+    member = known or Member("UNKNOWN", "", "", "", "", "", "")  # replaced once the caller says a name
+    if known:
+        facts.inner = make_facts(known.persona_id, known, None)
+    policy = Policy(member, facts, "member" if known else "other", approval, language, keypad_mode=True,
+                    async_approval=True)
+    sess = holder["s"] = Session(policy, "member" if known else "other", known.persona_id if known else None,
+                                 channel="line", known_number=bool(known),
+                                 line=line.LineState(language=language, known_number=bool(known), caller_digits=caller))
+    sess.line.facts = facts  # type: ignore[attr-defined]
+    policy.start()
+    with _lock:
+        _line_sessions[body.conversation_id] = sess
+        _sessions[policy.case.case_id] = sess
+    log.info("line call started case=%s language=%s known_number=%s caller_last4=%s", policy.case.case_id[-8:],
+             language, bool(known), caller[-4:])
+    db.add_event(policy.case.case_id, "call_started")
+    _after_change(sess)
+    return sess
+
+
+def _line_say(sess: Session, message_id: str, *, done: bool = False, cont: bool = False) -> dict:
+    text, _, _, _ = _speak(sess, message_id, audio=False)
+    return {"say": text, "end_call": done, "continue": cont}
+
+
+def _line_text(sess: Session, text: str) -> dict:
+    """A line-specific sentence (digit prompts and read-backs). Spoken digits are spaced, so no on-file value matches."""
+    if _leaks_member_value(text):
+        db.add_event(sess.policy.case.case_id, "pii_leak", "line_text")
+        text = line.PHRASES[sess.line.language]["retry"]
+    return {"say": text, "end_call": False, "continue": False}
+
+
+def _line_turn_result(sess: Session, t, speak=True) -> dict:
+    """Turn the policy's Turn into what the Line agent should say. Digit items are asked by voice, not on a keypad."""
+    st, ph = sess.line, line.PHRASES[sess.line.language]
+    field_name = sess.policy.expected_field()
+    if not t.done and field_name in ("dob", "zip", "ssn_last4"):
+        st.collecting, st.pending = field_name, None
+        return _line_text(sess, ph[{"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[field_name]])
+    st.collecting = st.pending = None
+    waiting = sess.policy.case.state == "step_up" and sess.approval is None
+    return _line_say(sess, t.message_id, done=t.done, cont=waiting)
+
+
+def _line_wait_for_approval(sess: Session) -> dict:
+    """Hold the turn until the member app answers or the 60 s timer fires. Never holds sess.lock while waiting."""
+    sess.resolved.wait(timeout=APPROVAL_SECONDS + 5)
+    with sess.lock:
+        result, sess.advance_result = sess.advance_result, None
+        if result:
+            return {"say": result["agent_text"], "end_call": bool(result["done"]), "continue": False}
+        sess.line.waits += 1
+        if sess.line.waits >= 2:  # something is wrong: stop waiting and hand to a human
+            t = sess.policy.idle_timeout()
+            _after_change(sess)
+            return _line_say(sess, t.message_id if t else "escalate", done=True)
+        return _line_say(sess, "ask_app_approval", cont=True)
+
+
+def _line_turn(body: LineTurn) -> dict:
+    if not body.conversation_id:
+        raise HTTPException(400, "conversation_id required")
+    sess = _line_sessions.get(body.conversation_id) or _create_line_session(body)
+    sess.last_active = time.time()
+    utterance = (body.utterance or "").strip()
+    st, policy = sess.line, sess.policy
+    if not utterance and (sess.advance_result or (policy.case.state == "step_up" and sess.approval is None)):
+        return _line_wait_for_approval(sess)  # the held turn: the answer to the approval, or wait for it
+    if policy.case.outcome:
+        return _line_say(sess, "call_over", done=True)
+    ph = line.PHRASES[st.language]
+    with sess.lock:
+        try:
+            it = interpreter.interpret(llm(), utterance, policy.case.state) if utterance else None
+        except LLMError:
+            t = policy.llm_unavailable()
+            _after_change(sess)
+            return _line_say(sess, t.message_id, done=True)
+        if it is None:  # empty or invalid model output
+            if not utterance:
+                return _line_text(sess, ph["retry"])
+            t = policy.repeat_needed()
+            _after_change(sess)
+            return _line_turn_result(sess, t)
+        # an unknown number: the member is chosen from the stated name among the demo members
+        if sess.persona is None and it.stated_name:
+            member = line.best_candidate(it.stated_name, load_members())
+            if member:
+                sess.persona = member.persona_id
+                policy.member = member
+                sess.line.facts.inner = make_facts(member.persona_id, member, st.caller_digits or None)
+                register_sensitive(member.sensitive_values())
+
+        # digits asked one item at a time and confirmed by reading back only what the caller just said
+        real_request = bool(set(it.request_types) & (CONTACT_CHANGES | MONEY_OR_CREDENTIALS))  # "other" is model noise on a plain "yes"
+        interrupt = it.intent in ("goodbye", "ask_human") or it.redirect_to_new_number or real_request
+        if st.collecting and not interrupt:
+            if st.pending is not None:
+                answer = line.yes_no(utterance)
+                if answer is None:
+                    return _line_text(sess, ph["yes_no"])
+                if answer:
+                    value, field_name = st.pending, st.collecting
+                    t = policy.provide_typed(field_name, value)
+                    _after_change(sess)
+                    return _line_turn_result(sess, t)
+                st.pending = None
+                return _line_text(sess, ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip",
+                                                               "ssn_last4": "ask_ssn4"}[st.collecting]])
+            value = line.item_digits(st.collecting, utterance, it.stated_dob)
+            if value is None:
+                return _line_text(sess, ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip",
+                                                               "ssn_last4": "ask_ssn4"}[st.collecting]])
+            st.pending = value
+            return _line_text(sess, ph["heard"].format(digits=line.read_back(value)))
+        t = policy.handle(it)
+        _after_change(sess)
+        return _line_turn_result(sess, t)
+
+
+@app.post("/api/line/turn")
+def line_turn(body: LineTurn):
+    expected = os.environ.get("LINE_PROBE_TOKEN", "")
+    if not expected or not hmac.compare_digest(body.line_token, expected):
+        raise HTTPException(401, "bad token")
+    try:
+        return _line_turn(body)
+    except HTTPException:
+        raise
+    except Exception as e:  # never leave the caller in silence: our own words, then a human
+        log.warning("line turn failed: %s", type(e).__name__)
+        return {"say": line.PHRASES[_line_language(body.called_number)]["fallback"], "end_call": True, "continue": False}
 
 
 @app.get("/api/health")

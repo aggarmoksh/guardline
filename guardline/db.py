@@ -19,6 +19,8 @@ class CaseRecord(SQLModel, table=True):
     language: str = "en"
     state: str = "greet"
     calling_from: str = "member"  # simulated caller ID
+    channel: str = "web"  # web | line
+    known_number: bool | None = None  # phone line only: caller ID equals the phone on file (smoother, never proof)
     persona: str | None = None  # sandbox demo-member id such as P13; never a name or value
     reasons: str = "[]"  # JSON list of codes
     flags: str = "[]"  # JSON list of non-tactic flags
@@ -55,11 +57,16 @@ def _migrate(eng) -> None:
         cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(caserecord)")}
         if "persona" not in cols:
             conn.exec_driver_sql("ALTER TABLE caserecord ADD COLUMN persona TEXT")
+        if "channel" not in cols:
+            conn.exec_driver_sql("ALTER TABLE caserecord ADD COLUMN channel TEXT DEFAULT 'web'")
+        if "known_number" not in cols:
+            conn.exec_driver_sql("ALTER TABLE caserecord ADD COLUMN known_number INTEGER")
         if "evidence" not in cols:
             conn.exec_driver_sql("ALTER TABLE caserecord ADD COLUMN evidence TEXT DEFAULT '[]'")
 
 
-def upsert_case(public: dict, calling_from: str, persona: str | None = None) -> dict:
+def upsert_case(public: dict, calling_from: str, persona: str | None = None, channel: str = "web",
+                known_number: bool | None = None) -> dict:
     """Store the code-only case file. `public` is Case.public(). Returns the stored record as a dict."""
     now = time.time()
     flags = public["flags"]
@@ -68,6 +75,7 @@ def upsert_case(public: dict, calling_from: str, persona: str | None = None) -> 
         rec.outcome, rec.risk, rec.verified = public["outcome"], public["risk"], public["verified"]
         rec.language, rec.state, rec.calling_from = public["language"], public["final_state"], calling_from
         rec.persona = persona or rec.persona
+        rec.channel, rec.known_number = channel, known_number
         rec.reasons = json.dumps(public["reasons"])
         rec.flags = json.dumps([f for f in flags if not f.startswith("TACTIC_")])
         rec.tactics = json.dumps([f for f in flags if f.startswith("TACTIC_")])
@@ -89,7 +97,7 @@ def add_event(case_id: str, kind: str, code: str | None = None) -> None:
 
 def case_dict(rec: CaseRecord) -> dict:
     return {"case_id": rec.case_id, "outcome": rec.outcome, "risk": rec.risk, "verified": rec.verified,
-            "language": rec.language, "state": rec.state, "calling_from": rec.calling_from, "persona": rec.persona,
+            "language": rec.language, "state": rec.state, "calling_from": rec.calling_from, "persona": rec.persona, "channel": rec.channel or "web", "known_number": rec.known_number,
             "reasons": json.loads(rec.reasons), "flags": json.loads(rec.flags), "tactics": json.loads(rec.tactics), "evidence": json.loads(rec.evidence or "[]"),
             "created_at": rec.created_at, "updated_at": rec.updated_at, "ended_at": rec.ended_at}
 
