@@ -471,9 +471,16 @@ def _create_line_session(body: LineTurn) -> Session:
     return sess
 
 
+HOLD_INSTRUCTION = ("Say the text in say to the caller out loud first. Only after you have finished saying it, "
+                    "call guardline_turn again with an empty utterance.")
+
+
 def _line_say(sess: Session, message_id: str, *, done: bool = False, cont: bool = False) -> dict:
     text, _, _, _ = _speak(sess, message_id, audio=False)
-    return {"say": text, "end_call": done, "continue": cont}
+    reply = {"say": text, "end_call": done, "continue": cont}
+    if cont:
+        reply["next"] = HOLD_INSTRUCTION
+    return reply
 
 
 def _line_text(sess: Session, text: str) -> dict:
@@ -494,6 +501,24 @@ def _line_turn_result(sess: Session, t, speak=True) -> dict:
     st.collecting = st.pending = None
     waiting = sess.policy.case.state == "step_up" and sess.approval is None
     return _line_say(sess, t.message_id, done=t.done, cont=waiting)
+
+
+def _line_hear(sess: Session, value: str) -> dict:
+    """Read the caller's own digits back, spaced out, and wait for a yes."""
+    st, ph = sess.line, line.PHRASES[sess.line.language]
+    st.pending = value
+    return _line_text(sess, ph["heard"].format(digits=line.read_back(value)))
+
+
+def _line_confirm(sess: Session, answer: bool) -> dict:
+    st, ph = sess.line, line.PHRASES[sess.line.language]
+    again = ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[st.collecting]]
+    if not answer:
+        st.pending = None
+        return _line_text(sess, again)
+    t = sess.policy.provide_typed(st.collecting, st.pending)
+    _after_change(sess)
+    return _line_turn_result(sess, t)
 
 
 def _line_wait_for_approval(sess: Session) -> dict:
@@ -524,6 +549,19 @@ def _line_turn(body: LineTurn) -> dict:
         return _line_say(sess, "call_over", done=True)
     ph = line.PHRASES[st.language]
     with sess.lock:
+        if st.last_say and line.is_repeat_request(utterance):  # "can you repeat that?" is not a request for a human
+            return st.last_say
+        # digits and yes/no are handled in code, without the language model (saves about a second a turn)
+        if st.collecting and st.pending is not None and line.pure_yes_no(utterance):
+            sess.line.used_llm = False
+            return _line_confirm(sess, bool(line.yes_no(utterance)))
+        if st.collecting and st.pending is None and line.pure_digits(utterance):
+            sess.line.used_llm = False
+            value = line.item_digits(st.collecting, utterance)
+            if value:
+                return _line_hear(sess, value)
+            return _line_text(sess, ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[st.collecting]])
+        sess.line.used_llm = True
         try:
             it = interpreter.interpret(llm(), utterance, policy.case.state) if utterance else None
         except LLMError:
@@ -553,23 +591,28 @@ def _line_turn(body: LineTurn) -> dict:
                 answer = line.yes_no(utterance)
                 if answer is None:
                     return _line_text(sess, ph["yes_no"])
-                if answer:
-                    value, field_name = st.pending, st.collecting
-                    t = policy.provide_typed(field_name, value)
-                    _after_change(sess)
-                    return _line_turn_result(sess, t)
-                st.pending = None
-                return _line_text(sess, ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip",
-                                                               "ssn_last4": "ask_ssn4"}[st.collecting]])
+                return _line_confirm(sess, answer)
             value = line.item_digits(st.collecting, utterance, it.stated_dob)
             if value is None:
-                return _line_text(sess, ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip",
-                                                               "ssn_last4": "ask_ssn4"}[st.collecting]])
-            st.pending = value
-            return _line_text(sess, ph["heard"].format(digits=line.read_back(value)))
+                return _line_text(sess, ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[st.collecting]])
+            return _line_hear(sess, value)
         t = policy.handle(it)
         _after_change(sess)
         return _line_turn_result(sess, t)
+
+
+LINE_LATENCY_CSV = Path(__file__).resolve().parents[1] / "logs" / "line_latency.csv"
+
+
+def _log_line_latency(ms: int, used_llm: bool) -> None:
+    """Backend time per phone-line turn (no text). Line's own turn detection and speech are not in this number."""
+    LINE_LATENCY_CSV.parent.mkdir(exist_ok=True)
+    new = not LINE_LATENCY_CSV.exists()
+    with LINE_LATENCY_CSV.open("a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["ts", "backend_ms", "used_llm"])
+        w.writerow([int(time.time()), ms, used_llm])
 
 
 @app.post("/api/line/turn")
@@ -577,8 +620,14 @@ def line_turn(body: LineTurn):
     expected = os.environ.get("LINE_PROBE_TOKEN", "")
     if not expected or not hmac.compare_digest(body.line_token, expected):
         raise HTTPException(401, "bad token")
+    t0 = time.perf_counter()
     try:
-        return _line_turn(body)
+        result = _line_turn(body)
+        sess = _line_sessions.get(body.conversation_id)
+        if sess:
+            sess.line.last_say = result
+            _log_line_latency(round((time.perf_counter() - t0) * 1000), sess.line.used_llm)
+        return result
     except HTTPException:
         raise
     except Exception as e:  # never leave the caller in silence: our own words, then a human

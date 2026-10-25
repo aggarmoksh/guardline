@@ -62,6 +62,32 @@ def yes_no(text: str) -> bool | None:
     return yes
 
 
+_FILLERS = {"and", "is", "it", "its", "it's", "my", "the", "uh", "um", "hmm", "that", "that's", "thats", "zip", "code", "of",
+            "please", "thanks", "thank", "you", "y", "es", "right", "ok"}
+_REPEAT_PHRASES = ("repeat", "say that again", "say it again", "say again", "again please", "once more", "come again", "pardon",
+                   "what did you say", "i missed", "missed that", "didn't catch", "didn't hear", "did not catch", "did not hear",
+                   "could you say", "can you say", "say that one more", "what was that", "sorry?", "repita", "otra vez",
+                   "de nuevo", "no escuch", "no entend", "perd")
+
+
+def is_repeat_request(utterance: str) -> bool:
+    """The caller asks to hear the last sentence again (for example after a read-back they missed)."""
+    low = utterance.lower().strip()
+    return bool(low) and any(p in low for p in _REPEAT_PHRASES)
+
+
+def pure_digits(utterance: str) -> bool:
+    """Only digits, digit words and filler: safe to handle without the language model."""
+    tokens = re.findall(r"[\w']+", utterance.lower())
+    return bool(tokens) and all(t.isdigit() or t in _DIGIT_WORDS or t in _FILLERS for t in tokens) and bool(spoken_digits(utterance))
+
+
+def pure_yes_no(utterance: str) -> bool:
+    """A bare yes or no (with filler only): safe to handle without the language model."""
+    tokens = re.findall(r"[\w']+", utterance.lower())
+    return bool(tokens) and all(t in _YES or t in _NO or t in _FILLERS for t in tokens) and yes_no(utterance) is not None
+
+
 def read_back(digits: str) -> str:
     """Digits spaced out so a voice reads them one by one (and so they never look like an on-file value)."""
     return " ".join(digits)
@@ -107,4 +133,6 @@ class LineState:
     known_number: bool = False
     caller_digits: str = ""  # kept in memory only, for the CRS reverse lookup; never logged or stored
     waits: int = 0
+    used_llm: bool = True
+    last_say: dict | None = None  # the last reply, so a caller who missed it can ask to hear it again
     facts: object = None  # DeferredFacts of an unknown caller, completed once a member is chosen

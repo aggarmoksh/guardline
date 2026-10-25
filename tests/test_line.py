@@ -27,8 +27,10 @@ MEMBERS = {
 class FakeLLM:
     def __init__(self):
         self.fail = False
+        self.calls = 0
 
     def forced_tool_call(self, system, user, tool):
+        self.calls += 1
         if self.fail:
             raise LLMError("down")
         said = user.split("Caller said: ", 1)[1]
@@ -208,3 +210,43 @@ def test_spoken_digit_helpers():
     assert line.item_digits("dob", "zero one zero one one nine seven zero") == "01011970"
     assert line.yes_no("yes that is right") is True and line.yes_no("no") is False and line.yes_no("hmm") is None
     assert line.yes_no("sí") is True and line.read_back("0101") == "0 1 0 1"
+
+
+def test_asking_to_repeat_the_readback_repeats_it_and_does_not_escalate(client):
+    say(client, "c-rep", "I need to change my mailing address.", caller=OTHER_CALLER)
+    say(client, "c-rep", "My name is Test Person.", caller=OTHER_CALLER)
+    heard = say(client, "c-rep", "zero one zero two one nine nine zero", caller=OTHER_CALLER)
+    calls_before = client.fake.calls
+    again = say(client, "c-rep", "Sorry, can you repeat that please?", caller=OTHER_CALLER)
+    assert again == heard and not again["end_call"]
+    assert client.fake.calls == calls_before  # no model call, and certainly no "ask for a human"
+    assert case_rows()[0]["outcome"] is None and "CALLER_REQUESTED_HUMAN" not in case_rows()[0]["reasons"]
+    assert say(client, "c-rep", "yes", caller=OTHER_CALLER)["say"] == line.PHRASES["en"]["ask_zip"]
+
+
+def test_digits_and_yes_no_are_handled_without_the_language_model(client):
+    to_step_up(client, "c-fast")
+    assert client.fake.calls == 2  # only the request and the name needed the model; 3 digit items and 3 yes answers did not
+
+
+def test_digits_with_other_words_still_go_to_the_model_so_interrupts_are_caught(client):
+    say(client, "c-mix", "I need to change my mailing address.", caller=OTHER_CALLER)
+    say(client, "c-mix", "My name is Test Person.", caller=OTHER_CALLER)
+    before = client.fake.calls
+    r = say(client, "c-mix", "zero one zero two, send it to my new number", caller=OTHER_CALLER)
+    assert client.fake.calls == before + 1 and r["end_call"] is True
+
+
+def test_the_held_turn_reply_tells_the_agent_to_speak_first(client):
+    r = to_step_up(client, "c-hold")
+    assert r["continue"] is True and "out loud first" in r["next"] and "empty utterance" in r["next"]
+    client.post("/api/approval", json={"case_id": case_rows()[0]["case_id"], "decision": "approved"})
+    assert say(client, "c-hold", "")["end_call"] is True  # answered, so the held call returns at once
+
+
+def test_repeat_and_filler_detection_helpers():
+    assert line.is_repeat_request("could you repeat that") and line.is_repeat_request("I missed that, again please")
+    assert line.is_repeat_request("repita por favor") and not line.is_repeat_request("yes") and not line.is_repeat_request("")
+    assert line.pure_digits("uh zero one zero one") and not line.pure_digits("zero three, send it to my new number")
+    assert not line.pure_digits("hello there") and line.pure_yes_no("yes that is right") is True
+    assert not line.pure_yes_no("yes but send it to my new number") and not line.pure_yes_no("hello")
