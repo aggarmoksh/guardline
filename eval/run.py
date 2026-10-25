@@ -272,9 +272,7 @@ def main_rerun() -> None:
     lines += [f"- {i}: was {', '.join(b)}, now {a}" for i, b, a in changed] or ["None. Every case ended with the same outcome as in all 3 runs of RESULTS_v2."]
     lines += ["", "## Per case", "", "| Case | Expected | Actual | Reasons | Result |", "|---|---|---|---|---|"]
     lines += [f"| {r['id']} | {r['expected']} | {r['actual']} | {', '.join(r['reasons'])} | {'PASS' if r['pass'] else 'FAIL'} |" for r in rows]
-    (EVAL / "RESULTS_4afix_rerun.md").write_text("
-".join(lines) + "
-", encoding="utf-8")
+    (EVAL / "RESULTS_4afix_rerun.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (EVAL / "results_4afix_rerun.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     print("passed", m["passed"], "/ 30; changes vs v2:", len(changed), "; leaks", m["leaks"])
 
