@@ -49,3 +49,23 @@ def render(llm: LLM | None, message_id: str, language: str) -> str:
 def prewarm(llm: LLM, language: str = "es") -> None:
     for message_id in TEMPLATES:
         render(llm, message_id, language)
+
+
+_free_cache: dict[tuple[str, str], str] = {}
+
+
+def translate(llm: LLM | None, text: str, language: str) -> str:
+    """Translate one fixed English sentence (cached). English, no model, or any failure returns the English sentence."""
+    if language == "en" or llm is None:
+        return text
+    key = (text, language)
+    if key in _free_cache:
+        return _free_cache[key]
+    try:
+        out = llm.complete(SYSTEM, f"Language: {LANG_NAMES[language]}\nSentence: {text}")
+    except LLMError:
+        return text
+    if not 0 < len(out) <= 300:
+        return text
+    _free_cache[key] = out
+    return out

@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv  # noqa: E402
 
-from guardline import interpreter, speaker  # noqa: E402
+from guardline import interpreter, phrasing, speaker  # noqa: E402
+from guardline.redact import redact, register_sensitive  # noqa: E402
 from guardline.facts import LiveFacts  # noqa: E402
 from guardline.llm import LLM, LLMError  # noqa: E402
 from guardline.members import load_members  # noqa: E402
@@ -57,13 +58,21 @@ def typed_value(member, field: str, kind: str) -> str:
     return value
 
 
-def run_case(case: dict, member, llm: LLM, agent_log: list[dict]) -> dict:
+def run_case(case: dict, member, llm: LLM, agent_log: list[dict], natural: bool = False, leaks=None) -> dict:
     policy = Policy(member, LiveFacts(case["persona"], member.name), case["calling_from"],
                     lambda _id: APP_ANSWER[case["approval"]], case["language"], keypad_mode=True)
     calls_before = llm.usage.calls
 
+    last = {"utterance": None}
+
     def agent(turn) -> None:
-        agent_log.append({"case": case["id"], "text": speaker.render(llm, turn.message_id, policy.case.language)})
+        fixed = speaker.render(llm, turn.message_id, policy.case.language)
+        text = fixed
+        if natural and turn.message_id in phrasing.INTENTS:
+            utt = redact(last["utterance"]) if last["utterance"] else None
+            text, _ = phrasing.natural_reply(llm, turn.message_id, policy.case.language, utt, fixed,
+                                             verified=policy.case.verified, leaks=leaks)
+        agent_log.append({"case": case["id"], "text": text})
 
     turn = policy.start()
     agent(turn)
@@ -73,6 +82,7 @@ def run_case(case: dict, member, llm: LLM, agent_log: list[dict]) -> dict:
             break
         if "say" in step:
             utterance = step["say"].replace("{name}", name)
+            last["utterance"] = utterance
             try:
                 it = interpreter.interpret(llm, utterance, policy.case.state)
                 turn = policy.repeat_needed() if it is None else policy.handle(it)
@@ -80,6 +90,7 @@ def run_case(case: dict, member, llm: LLM, agent_log: list[dict]) -> dict:
                 turn = policy.llm_unavailable()
             agent(turn)
         else:
+            last["utterance"] = None
             for field, kind in step["type"].items():
                 turn = policy.provide_typed(field, typed_value(member, field, kind))
                 agent(turn)
@@ -240,15 +251,20 @@ def write_results_v2(all_rows, leaks, cases, llm, cases_hash, run_hash, dirty) -
     (EVAL / "RESULTS_v2.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main_rerun() -> None:
+def main_rerun(tag: str = "4afix", natural: bool = False) -> None:
     """One more run of the 30 cases after Phase 4A-FIX; compares outcomes with results_v2.json. Touches no other results file."""
     load_dotenv()
     cases = yaml.safe_load((EVAL / "cases.yaml").read_text(encoding="utf-8"))["cases"]
     members = load_members()
+    for m in members.values():
+        register_sensitive(m.sensitive_values())
+    all_values = [v.casefold() for m in members.values() for v in m.sensitive_values() if len(v) >= 3]
+    leaks = lambda text: any(v in text.casefold() for v in all_values)  # noqa: E731
     llm = LLM()
+    phrasing.GUARD_STATS.clear()
     agent_log: list[dict] = []
-    rows = [run_case(c, members[c["persona"]], llm, agent_log) for c in cases]
-    path = EVAL / "out" / "agent_utterances_4afix.json"
+    rows = [run_case(c, members[c["persona"]], llm, agent_log, natural, leaks) for c in cases]
+    path = EVAL / "out" / f"agent_utterances_{tag}.json"
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(agent_log), encoding="utf-8")
     leak = json.loads(subprocess.run([sys.executable, "-I", str(EVAL / "leakcheck.py"), str(path)], capture_output=True,
@@ -261,9 +277,11 @@ def main_rerun() -> None:
         if before != {row["actual"]}:
             changed.append((row["id"], sorted(before), row["actual"]))
     cost = llm.usage.input_tokens / 1e6 * PRICE_IN + llm.usage.output_tokens / 1e6 * PRICE_OUT
-    lines = ["# Eval rerun after Phase 4A-FIX (post hoc)", "",
-             "One run of the 30 cases after the member-Deny, persona and idle-expiry changes. Cases and labels are unchanged; "
-             "eval/RESULTS.md and eval/RESULTS_v2.md are untouched.", "",
+    title = "Eval rerun with natural wording (Phase 4E, post hoc)" if natural else "Eval rerun after Phase 4A-FIX (post hoc)"
+    what = ("One run of the 30 cases with natural agent wording (a model words each fixed decision; a code guard falls back to the "
+            "fixed sentence). Decisions come from the policy as before.") if natural else            "One run of the 30 cases after the member-Deny, persona and idle-expiry changes."
+    rejected = sum(phrasing.GUARD_STATS.values())
+    lines = [f"# {title}", "", what + " Cases and labels are unchanged; eval/RESULTS.md and eval/RESULTS_v2.md are untouched.", "",
              f"- Date: {date.today().isoformat()}", f"- Model: `{llm.model}`", f"- Run commit: `{git('rev-parse', '--short', 'HEAD')}`",
              f"- Cases passed: {m['passed']} / 30; impostors verified {m['impostors_verified']}; impostors escalated_high "
              f"{m['impostors_high']} / 15; legit escalated_high {m['legit_high']}; legit verified {m['legit_verified']}; "
@@ -272,12 +290,15 @@ def main_rerun() -> None:
     lines += [f"- {i}: was {', '.join(b)}, now {a}" for i, b, a in changed] or ["None. Every case ended with the same outcome as in all 3 runs of RESULTS_v2."]
     lines += ["", "## Per case", "", "| Case | Expected | Actual | Reasons | Result |", "|---|---|---|---|---|"]
     lines += [f"| {r['id']} | {r['expected']} | {r['actual']} | {', '.join(r['reasons'])} | {'PASS' if r['pass'] else 'FAIL'} |" for r in rows]
-    (EVAL / "RESULTS_4afix_rerun.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (EVAL / "results_4afix_rerun.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    (EVAL / f"RESULTS_{tag}_rerun.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (EVAL / f"results_{tag}_rerun.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     print("passed", m["passed"], "/ 30; changes vs v2:", len(changed), "; leaks", m["leaks"])
 
 
 def main() -> None:
+    if "--rerun-4e" in sys.argv:
+        main_rerun("4e", natural=True)
+        return
     if "--rerun" in sys.argv:
         main_rerun()
         return

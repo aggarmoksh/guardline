@@ -18,13 +18,13 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFil
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from guardline import db, interpreter, line, speaker
+from guardline import db, interpreter, line, phrasing, speaker
 from guardline.broker import Broker
 from guardline.facts import DeferredFacts, LiveFacts
 from guardline.llm import LLM, LLMError
 from guardline.members import Member, load_members
 from guardline.policy import CONTACT_CHANGES, MONEY_OR_CREDENTIALS, Policy
-from guardline.redact import get_logger, register_sensitive
+from guardline.redact import get_logger, redact, register_sensitive
 from guardline.speech import Speech, SpeechError, get_speech
 
 load_dotenv()
@@ -132,11 +132,23 @@ def _leaks_member_value(text: str) -> bool:
     return any(v in low for v in _leak_values)
 
 
-def _speak(sess: Session, message_id: str, audio: bool = True) -> tuple[str, str | None, float, float]:
-    """Returns (agent text, audio b64 or None, llm_ms, tts_ms). A leak guard checks every agent line."""
+NATURAL_WEB = os.environ.get("NATURAL_REPLIES", "1") != "0"
+
+
+def _speak(sess: Session, message_id: str, audio: bool = True, utterance: str | None = None) -> tuple[str, str | None, float, float]:
+    """Returns (agent text, audio b64 or None, llm_ms, tts_ms). A leak guard checks every agent line.
+
+    On the web the wording is natural (a model words the policy's intent and must_ask); a code guard falls back to the
+    fixed sentence and counts GUARD_REJECTED. The decision itself never comes from the model.
+    """
     lang = sess.policy.case.language
     t0 = time.perf_counter()
-    text = speaker.render(llm(), message_id, lang)
+    text = fixed = speaker.render(llm(), message_id, lang)
+    if NATURAL_WEB and audio and message_id in phrasing.INTENTS:
+        text, reason = phrasing.natural_reply(llm(), message_id, lang, redact(utterance) if utterance else None, fixed,
+                                              verified=sess.policy.case.verified, leaks=_leaks_member_value)
+        if reason:
+            db.add_event(sess.policy.case.case_id, "guard_rejected", reason)
     llm_ms = (time.perf_counter() - t0) * 1000
     if _leaks_member_value(text):  # should never happen: message ids are fixed sentences
         db.add_event(sess.policy.case.case_id, "pii_leak", message_id)
@@ -280,7 +292,7 @@ def turn(case_id: str = Form(...), language: str = Form("en"), audio: UploadFile
                 t = policy.llm_unavailable()
         llm_ms = (time.perf_counter() - t0) * 1000
 
-        text, audio_b64, speak_llm_ms, tts_ms = _speak(sess, t.message_id)
+        text, audio_b64, speak_llm_ms, tts_ms = _speak(sess, t.message_id, utterance=transcript)
         _after_change(sess)
         state = _public_state(sess)
     llm_ms += speak_llm_ms
@@ -471,24 +483,40 @@ def _create_line_session(body: LineTurn) -> Session:
     return sess
 
 
-HOLD_INSTRUCTION = ("Say the text in say to the caller out loud first. Only after you have finished saying it, "
-                    "call guardline_turn again with an empty utterance.")
+def _line_reply(sess: Session, message_id: str, fixed: str, *, must_ask: str | None = None, done: bool = False,
+                cont: bool = False) -> dict:
+    """What the Line agent needs to speak naturally: intent (what to convey), must_ask (the exact question), state, fallback.
 
-
-def _line_say(sess: Session, message_id: str, *, done: bool = False, cont: bool = False) -> dict:
-    text, _, _, _ = _speak(sess, message_id, audio=False)
-    reply = {"say": text, "end_call": done, "continue": cont}
+    No member data in any field. The policy decided everything in it; the agent only chooses the words."""
+    intent, default_ask = phrasing.intent_for(message_id)
+    lang = sess.line.language
+    ask = must_ask if must_ask is not None else (speaker.translate(llm(), default_ask, lang) if default_ask else None)
+    if ask and _leaks_member_value(ask):
+        db.add_event(sess.policy.case.case_id, "pii_leak", "line_must_ask")
+        ask = fixed = line.PHRASES[lang]["retry"]
+    reply = {"intent": intent, "must_ask": ask, "state": sess.policy.case.state,
+             "say_fallback": fixed, "end_call": done, "continue": cont}
     if cont:
         reply["next"] = HOLD_INSTRUCTION
     return reply
 
 
-def _line_text(sess: Session, text: str) -> dict:
+def _line_say(sess: Session, message_id: str, *, done: bool = False, cont: bool = False) -> dict:
+    text, _, _, _ = _speak(sess, message_id, audio=False)  # the fixed sentence is the fallback
+    return _line_reply(sess, message_id, text, done=done, cont=cont)
+
+
+HOLD_INSTRUCTION = ("Speak your reply to the caller out loud first. Only after you have finished speaking it, "
+                    "call guardline_turn again with an empty utterance.")
+
+
+def _line_text(sess: Session, text: str, message_id: str = "retry") -> dict:
     """A line-specific sentence (digit prompts and read-backs). Spoken digits are spaced, so no on-file value matches."""
     if _leaks_member_value(text):
         db.add_event(sess.policy.case.case_id, "pii_leak", "line_text")
         text = line.PHRASES[sess.line.language]["retry"]
-    return {"say": text, "end_call": False, "continue": False}
+        message_id = "retry"
+    return _line_reply(sess, message_id, text, must_ask=text)
 
 
 def _line_turn_result(sess: Session, t, speak=True) -> dict:
@@ -497,7 +525,8 @@ def _line_turn_result(sess: Session, t, speak=True) -> dict:
     field_name = sess.policy.expected_field()
     if not t.done and field_name in ("dob", "zip", "ssn_last4"):
         st.collecting, st.pending = field_name, None
-        return _line_text(sess, ph[{"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[field_name]])
+        key = {"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[field_name]
+        return _line_text(sess, ph[key], key)
     st.collecting = st.pending = None
     waiting = sess.policy.case.state == "step_up" and sess.approval is None
     return _line_say(sess, t.message_id, done=t.done, cont=waiting)
@@ -507,7 +536,7 @@ def _line_hear(sess: Session, value: str) -> dict:
     """Read the caller's own digits back, spaced out, and wait for a yes."""
     st, ph = sess.line, line.PHRASES[sess.line.language]
     st.pending = value
-    return _line_text(sess, ph["heard"].format(digits=line.read_back(value)))
+    return _line_text(sess, ph["heard"].format(digits=line.read_back(value)), "heard")
 
 
 def _line_confirm(sess: Session, answer: bool) -> dict:
@@ -515,7 +544,7 @@ def _line_confirm(sess: Session, answer: bool) -> dict:
     again = ph["retry"] + " " + ph[{"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[st.collecting]]
     if not answer:
         st.pending = None
-        return _line_text(sess, again)
+        return _line_text(sess, again, {"dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}[st.collecting])
     t = sess.policy.provide_typed(st.collecting, st.pending)
     _after_change(sess)
     return _line_turn_result(sess, t)
@@ -527,7 +556,8 @@ def _line_wait_for_approval(sess: Session) -> dict:
     with sess.lock:
         result, sess.advance_result = sess.advance_result, None
         if result:
-            return {"say": result["agent_text"], "end_call": bool(result["done"]), "continue": False}
+            mid = "handoff" if sess.policy.case.verified else "escalate"
+            return _line_reply(sess, mid, result["agent_text"], done=bool(result["done"]))
         sess.line.waits += 1
         if sess.line.waits >= 2:  # something is wrong: stop waiting and hand to a human
             t = sess.policy.idle_timeout()
@@ -590,7 +620,7 @@ def _line_turn(body: LineTurn) -> dict:
             if st.pending is not None:
                 answer = line.yes_no(utterance)
                 if answer is None:
-                    return _line_text(sess, ph["yes_no"])
+                    return _line_text(sess, ph["yes_no"], "yes_no")
                 return _line_confirm(sess, answer)
             value = line.item_digits(st.collecting, utterance, it.stated_dob)
             if value is None:
@@ -632,7 +662,9 @@ def line_turn(body: LineTurn):
         raise
     except Exception as e:  # never leave the caller in silence: our own words, then a human
         log.warning("line turn failed: %s", type(e).__name__)
-        return {"say": line.PHRASES[_line_language(body.called_number)]["fallback"], "end_call": True, "continue": False}
+        fixed = line.PHRASES[_line_language(body.called_number)]["fallback"]
+        return {"intent": phrasing.intent_for("fallback")[0], "must_ask": None, "state": "outcome",
+                "say_fallback": fixed, "end_call": True, "continue": False}
 
 
 @app.get("/api/health")

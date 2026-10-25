@@ -84,11 +84,11 @@ def say(client, conv, utterance, caller=KNOWN_CALLER, called="+13613138909"):
 def to_step_up(client, conv, caller=KNOWN_CALLER, name="Test Person"):
     say(client, conv, "I need to change my mailing address.", caller)
     r = say(client, conv, f"My name is {name}.", caller)
-    assert r["say"] == line.PHRASES["en"]["ask_dob"]
+    assert r["say_fallback"] == line.PHRASES["en"]["ask_dob"]
     for spoken, heard in (("zero one zero two one nine nine zero", "0 1 0 2 1 9 9 0"),
                           ("nine zero two one zero", "9 0 2 1 0"), ("four three two one", "4 3 2 1")):
         r = say(client, conv, spoken, caller)
-        assert r["say"] == f"I heard {heard}. Is that right?"
+        assert r["say_fallback"] == f"I heard {heard}. Is that right?"
         r = say(client, conv, "yes", caller)
     return r
 
@@ -99,13 +99,13 @@ def case_rows():
 
 def test_known_number_is_the_candidate_and_the_call_goes_through_approval_to_handoff(client):
     r = to_step_up(client, "c-known")
-    assert r["continue"] is True and not r["end_call"] and "approval request" in r["say"]
+    assert r["continue"] is True and not r["end_call"] and "approval request" in r["say_fallback"]
     [row] = case_rows()
     assert row["persona"] == "P01" and row["known_number"] is True and row["channel"] == "line"
     approved = client.post("/api/approval", json={"case_id": row["case_id"], "decision": "approved"})
     assert approved.json() == {"ok": True}
     done = say(client, "c-known", "")  # the continuation call returns the final words
-    assert done["end_call"] is True and done["continue"] is False and "team member" in done["say"]
+    assert done["end_call"] is True and done["continue"] is False and "team member" in done["say_fallback"]
     [row] = case_rows()
     assert row["outcome"] == "verified_handoff" and row["verified"] is True
     assert {e["product"] for e in row["evidence"]} == {"TransUnion identity verification", "AccurateAppend reverse phone"}
@@ -145,11 +145,11 @@ def test_a_wrong_confirmation_asks_for_the_item_again(client):
     say(client, "c-no", "I need to change my mailing address.")
     say(client, "c-no", "My name is Test Person.")
     r = say(client, "c-no", "zero one zero two one nine nine zero")
-    assert "Is that right?" in r["say"]
+    assert "Is that right?" in r["say_fallback"]
     r = say(client, "c-no", "no")
-    assert r["say"].endswith(line.PHRASES["en"]["ask_dob"]) and not r["end_call"]
+    assert r["say_fallback"].endswith(line.PHRASES["en"]["ask_dob"]) and not r["end_call"]
     r = say(client, "c-no", "maybe")  # not usable as a date of birth either
-    assert r["say"] == line.PHRASES["en"]["retry"] + " " + line.PHRASES["en"]["ask_dob"]
+    assert r["say_fallback"] == line.PHRASES["en"]["retry"] + " " + line.PHRASES["en"]["ask_dob"]
 
 
 def test_redirect_during_digit_collection_escalates_immediately(client):
@@ -163,16 +163,17 @@ def test_redirect_during_digit_collection_escalates_immediately(client):
 def test_llm_failure_ends_safely_with_our_own_words(client):
     client.fake.fail = True
     r = say(client, "c-fail", "Hello, I need help.")
-    assert r["end_call"] is True and "technical problem" in r["say"]
+    assert r["end_call"] is True and "technical problem" in r["say_fallback"]
     assert case_rows()[0]["outcome"] == "ended_safe" and "LLM_UNAVAILABLE" in case_rows()[0]["reasons"]
 
 
 def test_any_other_failure_returns_the_fallback_sentence_and_ends(client, monkeypatch):
     monkeypatch.setattr(api, "_line_turn", lambda body: (_ for _ in ()).throw(RuntimeError("boom")))
     r = say(client, "c-boom", "hi")
-    assert r == {"say": line.PHRASES["en"]["fallback"], "end_call": True, "continue": False}
+    assert r["say_fallback"] == line.PHRASES["en"]["fallback"] and r["end_call"] is True and r["continue"] is False
+    assert r["must_ask"] is None and r["state"] == "outcome"
     r = say(client, "c-boom", "hola", called="+1 361 555 0199")
-    assert r["say"] == line.PHRASES["es"]["fallback"]
+    assert r["say_fallback"] == line.PHRASES["es"]["fallback"]
 
 
 def test_the_token_is_required(client):
@@ -183,7 +184,7 @@ def test_the_token_is_required(client):
 
 def test_the_spanish_number_gives_a_spanish_call(client):
     r = say(client, "c-es", "I need to change my mailing address.", called="+1 (361) 555-0199")
-    assert r["say"].startswith("ES: ")
+    assert r["say_fallback"].startswith("ES: ")
     assert case_rows()[0]["language"] == "es"
 
 
@@ -221,7 +222,7 @@ def test_asking_to_repeat_the_readback_repeats_it_and_does_not_escalate(client):
     assert again == heard and not again["end_call"]
     assert client.fake.calls == calls_before  # no model call, and certainly no "ask for a human"
     assert case_rows()[0]["outcome"] is None and "CALLER_REQUESTED_HUMAN" not in case_rows()[0]["reasons"]
-    assert say(client, "c-rep", "yes", caller=OTHER_CALLER)["say"] == line.PHRASES["en"]["ask_zip"]
+    assert say(client, "c-rep", "yes", caller=OTHER_CALLER)["say_fallback"] == line.PHRASES["en"]["ask_zip"]
 
 
 def test_digits_and_yes_no_are_handled_without_the_language_model(client):
@@ -250,3 +251,21 @@ def test_repeat_and_filler_detection_helpers():
     assert line.pure_digits("uh zero one zero one") and not line.pure_digits("zero three, send it to my new number")
     assert not line.pure_digits("hello there") and line.pure_yes_no("yes that is right") is True
     assert not line.pure_yes_no("yes but send it to my new number") and not line.pure_yes_no("hello")
+
+
+def test_the_reply_is_intent_must_ask_state_and_fallback_with_no_member_data(client):
+    say(client, "c-shape", "I need to change my mailing address.")
+    r = say(client, "c-shape", "My name is Test Person.")
+    assert set(r) == {"intent", "must_ask", "state", "say_fallback", "end_call", "continue"}
+    assert r["state"] == "collect_identity" and "date of birth" in r["must_ask"].lower()
+    assert "say" not in r  # the agent words it; the fixed sentence is only the fallback
+    blob = json.dumps(r)
+    for m in MEMBERS.values():
+        for value in m.sensitive_values():
+            assert value.lower() not in blob.lower()
+
+
+def test_the_approval_reply_names_no_outcome_and_asks_the_member_to_use_the_app(client):
+    r = to_step_up(client, "c-appr")
+    assert r["state"] == "step_up" and r["continue"] is True and "approved" in r["intent"].lower()
+    assert "do not say it was approved" in r["intent"].lower() and "app" in r["must_ask"].lower()
