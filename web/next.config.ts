@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 // One origin for the phone: the browser calls /api/* here and Next forwards it to the FastAPI backend.
 const nextConfig: NextConfig = {
+  compress: false, // gzip would buffer the server-sent event streams
   turbopack: {
     rules: {
       "*.css": {

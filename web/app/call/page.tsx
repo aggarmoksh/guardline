@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pickMime, playBase64Wav, toWav16k, unlockAudio } from "@/lib/audio";
 
 type Line = { who: "agent" | "caller"; text: string };
@@ -49,6 +49,20 @@ export default function Call() {
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const langRef = useRef<"en" | "es">("en");
+
+  // The member app answering (or timing out) advances the call by itself: no "I approved it" needed.
+  useEffect(() => {
+    if (!started) return;
+    const es = new EventSource("/api/events");
+    es.onmessage = async (m) => {
+      const ev = JSON.parse(m.data);
+      if (ev.case_id !== caseId.current || ev.type !== "turn_ready") return;
+      const r = await (await fetch(`/api/call/${caseId.current}/result`)).json();
+      if (r.agent_text) await applyResp(r);
+    };
+    return () => es.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [started]);
 
   const setLanguage = (l: "en" | "es") => {
     langRef.current = l;
@@ -164,8 +178,9 @@ export default function Call() {
   if (!started) {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-5 p-6">
-        <h1 className="text-2xl font-semibold">GuardLine</h1>
-        <p className="text-sm opacity-70">Credit union phone line. Sandbox data only.</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">Demo (simulated phone line)</p>
+        <h1 className="text-3xl font-semibold">Bay Area Community CU</h1>
+        <p className="text-sm opacity-70">Member phone line, answered by GuardLine. Sandbox data only.</p>
         <fieldset className="flex flex-col gap-2 rounded-xl border p-4">
           <legend className="px-1 text-xs font-semibold uppercase text-amber-600">Simulated caller ID</legend>
           {(["member", "other"] as const).map((v) => (
@@ -178,7 +193,7 @@ export default function Call() {
         <label className="flex items-center gap-3 text-sm">
           Demo member
           <select className="rounded border p-1 text-black" value={persona} onChange={(e) => setPersona(e.target.value)}>
-            {["P01", "P13"].map((p) => <option key={p}>{p}</option>)}
+            {["P01", "P13", "P16"].map((p) => <option key={p}>{p}</option>)}
           </select>
         </label>
         <div>{chip}</div>
@@ -205,7 +220,7 @@ export default function Call() {
           </p>
         ))}
       </section>
-      {awaiting && <p className="rounded-xl border-2 border-amber-500 p-3 text-sm">Approval requested in the simulated banking app (/approve). Approve there, then tell the agent.</p>}
+      {awaiting && <p className="rounded-xl border-2 border-amber-500 p-3 text-sm">Waiting for your answer in the member app (simulated). This call continues by itself when you answer.</p>}
       {outcome ? (
         <p className="rounded-xl bg-gray-900 p-4 text-center text-white">{OUTCOME_LABEL[outcome] ?? outcome}</p>
       ) : expect && expect !== "name" ? (

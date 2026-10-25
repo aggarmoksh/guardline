@@ -191,12 +191,13 @@ class Turn:
 class Policy:
     def __init__(self, member: Member, facts: Facts, calling_from: str,
                  request_app_approval: Callable[[str], str], language: str = "en",
-                 lock_language: bool = True, keypad_mode: bool = False):
+                 lock_language: bool = True, keypad_mode: bool = False, async_approval: bool = False):
         """keypad_mode: DOB, ZIP and SSN last 4 arrive only through provide_typed(); the name comes by voice."""
         self.member, self.facts, self.calling_from = member, facts, calling_from
         self._approve = request_app_approval
         self.lock_language = lock_language  # the caller-set language chip wins over per-utterance detection
         self.keypad_mode = keypad_mode
+        self.async_approval = async_approval  # the approval resolves on its own (advance_after_approval), not on a caller line
         self.case = Case("case-" + "".join(secrets.choice("abcdefghijklmnop") for _ in range(8)), language)
         self._signals = Signals()
         self._unclear = 0
@@ -241,6 +242,12 @@ class Policy:
             return self._finish("escalated_high", None, "escalate")
         return self._collect_identity()
 
+    def advance_after_approval(self) -> Turn | None:
+        """The simulated member app answered (or timed out): apply the same step-up response as a caller line would."""
+        if self.case.outcome or self.case.state != "step_up":
+            return None
+        return self._step_up_response()
+
     def handle(self, it: Interpretation) -> Turn:
         c = self.case
         if c.outcome:
@@ -277,6 +284,8 @@ class Policy:
         if c.state == "collect_identity":
             return self._collect_identity()
         if c.state == "step_up":
+            if self.async_approval:  # still waiting for the member app; hang-ups and redirects were handled above
+                return Turn("ask_app_approval")
             return self._step_up_response()
         if c.state == "request":
             return self._request_state()
