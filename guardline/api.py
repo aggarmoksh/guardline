@@ -31,6 +31,7 @@ load_dotenv()
 log = get_logger("guardline.api")
 LATENCY_CSV = Path(__file__).resolve().parents[1] / "logs" / "latency.csv"
 LATENCY_FIELDS = ["ts", "kind", "provider", "language", "stt_ms", "llm_ms", "tts_ms", "total_ms"]
+IDLE_SECONDS = int(os.environ.get("GUARDLINE_IDLE_SECONDS", "180"))
 APPROVAL_SECONDS = int(os.environ.get("GUARDLINE_APPROVAL_SECONDS", "60"))
 SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 
@@ -46,6 +47,8 @@ _leak_values: list[str] | None = None
 class Session:
     policy: Policy
     calling_from: str
+    persona: str | None = None
+    last_active: float = field(default_factory=time.time)
     approval: str | None = None  # None until the simulated member decides (or the 60 s timer fires)
     lock: threading.Lock = field(default_factory=threading.Lock)
     announced: bool = False
@@ -72,10 +75,38 @@ def speech() -> Speech:
     return _speech
 
 
+def _sweep_once(idle_seconds: float = IDLE_SECONDS, now: float | None = None) -> list[str]:
+    """Close calls with no activity for `idle_seconds`. A pending approval follows the abandon rule."""
+    now = time.time() if now is None else now
+    closed = []
+    for sess in list(_sessions.values()):
+        if sess.policy.case.outcome or now - sess.last_active < idle_seconds:
+            continue
+        with sess.lock:
+            if sess.timer:
+                sess.timer.cancel()
+            if sess.policy.idle_timeout():
+                sess.approval = sess.approval or "timeout"
+                _after_change(sess)
+                closed.append(sess.policy.case.case_id)
+    return closed
+
+
+def _sweeper() -> None:
+    while True:
+        time.sleep(10)
+        try:
+            _sweep_once()
+        except Exception as e:  # never let the sweeper die
+            log.warning("sweep failed: %s", type(e).__name__)
+
+
 @app.on_event("startup")
 def _startup() -> None:
     db.engine()
+    db.close_stale(IDLE_SECONDS)  # open cases left over from a previous run
     threading.Thread(target=speaker.prewarm, args=(llm(),), daemon=True).start()
+    threading.Thread(target=_sweeper, daemon=True).start()
 
 
 def _log_latency(row: dict) -> None:
@@ -130,7 +161,7 @@ def _approval_request(sess: Session) -> dict:
 def _after_change(sess: Session) -> None:
     """Persist the case file, announce a new approval request, close out an ended call, notify the dashboard."""
     c = sess.policy.case
-    rec = db.upsert_case(c.public(), sess.calling_from)
+    rec = db.upsert_case(c.public(), sess.calling_from, sess.persona)
     if c.state == "step_up" and not sess.announced and sess.approval is None:
         sess.announced = True
         sess.requested_at = time.time()
@@ -152,6 +183,7 @@ def _after_change(sess: Session) -> None:
 def _resolve(sess: Session, decision: str) -> bool:
     """The member app answered (approved | denied) or the 60 s timer fired (timeout). Advance the call."""
     c = sess.policy.case
+    sess.last_active = time.time()
     with sess.lock:
         if sess.approval is not None or c.state != "step_up":
             return False
@@ -196,7 +228,7 @@ def start_call(req: StartRequest):
 
     policy = Policy(member, LiveFacts(req.persona, member.name), req.calling_from, approval, req.language,
                     keypad_mode=True, async_approval=True)
-    sess = holder["s"] = Session(policy, req.calling_from)
+    sess = holder["s"] = Session(policy, req.calling_from, req.persona)
     turn = policy.start()
     text, audio, _, _ = _speak(sess, turn.message_id)
     with _lock:
@@ -212,6 +244,7 @@ def turn(case_id: str = Form(...), language: str = Form("en"), audio: UploadFile
     if not sess:
         raise HTTPException(404, "unknown case")
     policy = sess.policy
+    sess.last_active = time.time()
     t_total = time.perf_counter()
     wav = audio.file.read()
     with sess.lock:
@@ -263,6 +296,7 @@ def keypad_entry(body: Entry):
     sess = _sessions.get(body.case_id)
     if not sess:
         raise HTTPException(404, "unknown case")
+    sess.last_active = time.time()
     t_total = time.perf_counter()
     with sess.lock:
         t = sess.policy.provide_typed(body.field, body.value)

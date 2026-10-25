@@ -44,7 +44,7 @@ def test_stored_case_has_only_code_fields(fresh_db):
     db.upsert_case(public("c1", "verified_handoff", verified=True, reasons=["VERIFIED"]), "member")
     [row] = db.list_cases()
     assert set(row) == {"case_id", "outcome", "risk", "verified", "language", "state", "calling_from", "reasons",
-                        "flags", "tactics", "created_at", "updated_at", "ended_at"}
+                        "flags", "tactics", "created_at", "updated_at", "ended_at", "persona"}
 
 
 def test_counters_come_from_stored_rows(fresh_db):
@@ -125,14 +125,14 @@ def test_async_approval_waits_then_advances_without_a_caller_line():
     assert p.advance_after_approval() is None  # nothing left to advance
 
 
-def test_async_approval_denied_with_clean_phone_is_unverified_handoff():
+def test_async_approval_denied_is_escalated_high_even_with_clean_phone():
     p = Policy(FAKE, FixtureFacts("P01"), "member", lambda _i: "denied", keypad_mode=True, async_approval=True)
     p.start()
     p.handle(Interpretation(intent="make_request", request_types=("change_mailing_address",)))
     p.handle(Interpretation(stated_name="Test Person"))
     type_all(p)
     p.advance_after_approval()
-    assert p.case.outcome == "unverified_handoff" and p.case.risk_level == "MEDIUM"
+    assert p.case.outcome == "escalated_high" and "MEMBER_DENIED_CALL" in p.case.reasons
 
 
 def test_hangup_while_waiting_in_async_mode_is_still_abandonment():
@@ -143,3 +143,77 @@ def test_hangup_while_waiting_in_async_mode_is_still_abandonment():
     type_all(p)
     p.handle(Interpretation(intent="goodbye"))
     assert p.case.outcome == "escalated_high" and "ABANDONED_DURING_STEP_UP" in p.case.reasons
+
+
+# -- persona id, migration, idle expiry ----------------------------------------------------
+def test_persona_id_is_stored_and_not_overwritten_by_later_updates(fresh_db):
+    db.upsert_case(public("c1", state="step_up"), "member", "P13")
+    db.upsert_case(public("c1", "escalated_high", "HIGH"), "member")  # later update without a persona
+    [row] = db.list_cases()
+    assert row["persona"] == "P13"
+
+
+def test_existing_database_without_the_persona_column_is_migrated(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE caserecord (case_id TEXT PRIMARY KEY, outcome TEXT, risk TEXT, verified INTEGER, "
+                "language TEXT, state TEXT, calling_from TEXT, reasons TEXT, flags TEXT, tactics TEXT, "
+                "created_at REAL, updated_at REAL, ended_at REAL)")
+    con.execute("INSERT INTO caserecord VALUES ('old', NULL, 'LOW', 0, 'en', 'collect_identity', 'member', '[]', '[]', '[]', 1, 1, NULL)")
+    con.commit()
+    con.close()
+    try:
+        db.engine(path)
+        [row] = db.list_cases()
+        assert row["case_id"] == "old" and row["persona"] is None
+    finally:
+        db._engine = None
+
+
+def test_close_stale_ends_open_cases_with_call_abandoned(fresh_db):
+    db.upsert_case(public("stale", state="collect_identity", reasons=["IDENTITY_REENTRY_REQUESTED"]), "member", "P01")
+    db.upsert_case(public("fresh", state="collect_identity"), "member", "P01")
+    with db.Session(db.engine()) as s:  # age one of them
+        rec = s.get(db.CaseRecord, "stale")
+        rec.updated_at -= 600
+        s.add(rec)
+        s.commit()
+    assert db.close_stale(180) == ["stale"]
+    rows = {r["case_id"]: r for r in db.list_cases()}
+    assert rows["stale"]["outcome"] == "ended_safe" and "CALL_ABANDONED" in rows["stale"]["reasons"]
+    assert rows["fresh"]["outcome"] is None
+
+
+def test_close_stale_applies_the_abandon_rule_to_a_pending_approval(fresh_db):
+    db.upsert_case(public("mismatch", state="step_up", reasons=["REVERSE_PHONE_NAME_DIFFERS"]), "other", "P01")
+    db.upsert_case(public("clean", state="step_up", reasons=["CONTACT_CHANGE_STEP_UP"]), "member", "P01")
+    assert set(db.close_stale(180, now=10**10)) == {"mismatch", "clean"}
+    rows = {r["case_id"]: r for r in db.list_cases()}
+    assert rows["mismatch"]["outcome"] == "escalated_high" and rows["mismatch"]["risk"] == "HIGH"
+    assert rows["clean"]["outcome"] == "unverified_handoff" and rows["clean"]["risk"] == "MEDIUM"
+    assert "ABANDONED_DURING_STEP_UP" in rows["clean"]["reasons"]
+
+
+def test_live_sweeper_closes_idle_calls_and_spares_active_ones(fresh_db):
+    import time
+    from guardline import api
+    from tests.test_policy import at_step_up, keypad_policy
+    api._sessions.clear()
+    idle = api.Session(keypad_policy(), "member", "P01")
+    pending = api.Session(at_step_up(FixtureFacts("P01"), calling_from="other"), "other", "P13")
+    active = api.Session(keypad_policy(), "member", "P16")
+    for s in (idle, pending, active):
+        api._sessions[s.policy.case.case_id] = s
+        s.announced = True
+    idle.last_active = pending.last_active = time.time() - 400
+    try:
+        closed = api._sweep_once(idle_seconds=180)
+        assert set(closed) == {idle.policy.case.case_id, pending.policy.case.case_id}
+        assert idle.policy.case.outcome == "ended_safe" and "CALL_ABANDONED" in idle.policy.case.reasons
+        assert pending.policy.case.outcome == "escalated_high"
+        assert active.policy.case.outcome is None
+        rows = {r["case_id"]: r for r in db.list_cases()}
+        assert rows[idle.policy.case.case_id]["persona"] == "P01"
+    finally:
+        api._sessions.clear()

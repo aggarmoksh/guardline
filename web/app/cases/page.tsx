@@ -10,6 +10,7 @@ type Case = {
   language: "en" | "es";
   state: string;
   calling_from: "member" | "other";
+  persona: string | null;
   reasons: string[];
   flags: string[];
   tactics: string[];
@@ -32,7 +33,9 @@ const REASON: Record<string, string> = {
   CONTACT_CHANGE_STEP_UP: "Contact change needs member approval",
   STEP_UP_REQUIRED: "Member approval requested",
   APP_APPROVED_SIMULATED: "Member approved in app (simulated)",
+  MEMBER_DENIED_CALL: "Member tapped Deny: not me calling",
   APP_APPROVAL_DENIED: "Member denied the approval",
+  CALL_ABANDONED: "Call abandoned (no activity for 3 minutes)",
   APP_APPROVAL_TIMEOUT: "Approval timed out",
   ABANDONED_DURING_STEP_UP: "Caller left while approval was pending",
   REVERSE_PHONE_NAME_DIFFERS: "Calling number belongs to someone else",
@@ -160,6 +163,7 @@ export default function Cases() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-3 py-1 text-sm font-semibold ${o.cls}`}>{o.label}</span>
                 <span className={`text-sm font-semibold ${RISK_CLS[c.risk] ?? ""}`}>{c.risk} risk</span>
+                {c.persona && <span className="rounded bg-slate-700 px-2 py-0.5 text-xs font-semibold">Demo member {c.persona}</span>}
                 <span className="rounded bg-slate-800 px-2 py-0.5 text-xs">{c.language === "es" ? "Spanish" : "English"}</span>
                 <span className="rounded bg-slate-800 px-2 py-0.5 text-xs">{c.calling_from === "member" ? "member phone (sim.)" : "other phone (sim.)"}</span>
                 <span className="ml-auto text-xs opacity-60">{c.case_id.slice(-8)} · {ago(c.created_at, now)}</span>

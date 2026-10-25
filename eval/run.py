@@ -240,7 +240,49 @@ def write_results_v2(all_rows, leaks, cases, llm, cases_hash, run_hash, dirty) -
     (EVAL / "RESULTS_v2.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def main_rerun() -> None:
+    """One more run of the 30 cases after Phase 4A-FIX; compares outcomes with results_v2.json. Touches no other results file."""
+    load_dotenv()
+    cases = yaml.safe_load((EVAL / "cases.yaml").read_text(encoding="utf-8"))["cases"]
+    members = load_members()
+    llm = LLM()
+    agent_log: list[dict] = []
+    rows = [run_case(c, members[c["persona"]], llm, agent_log) for c in cases]
+    path = EVAL / "out" / "agent_utterances_4afix.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(agent_log), encoding="utf-8")
+    leak = json.loads(subprocess.run([sys.executable, "-I", str(EVAL / "leakcheck.py"), str(path)], capture_output=True,
+                                     text=True, cwd=ROOT).stdout)
+    v2 = json.loads((EVAL / "results_v2.json").read_text(encoding="utf-8"))
+    m = run_metrics(rows, leak)
+    changed = []
+    for idx, row in enumerate(rows):
+        before = {run[idx]["actual"] for run in v2}
+        if before != {row["actual"]}:
+            changed.append((row["id"], sorted(before), row["actual"]))
+    cost = llm.usage.input_tokens / 1e6 * PRICE_IN + llm.usage.output_tokens / 1e6 * PRICE_OUT
+    lines = ["# Eval rerun after Phase 4A-FIX (post hoc)", "",
+             "One run of the 30 cases after the member-Deny, persona and idle-expiry changes. Cases and labels are unchanged; "
+             "eval/RESULTS.md and eval/RESULTS_v2.md are untouched.", "",
+             f"- Date: {date.today().isoformat()}", f"- Model: `{llm.model}`", f"- Run commit: `{git('rev-parse', '--short', 'HEAD')}`",
+             f"- Cases passed: {m['passed']} / 30; impostors verified {m['impostors_verified']}; impostors escalated_high "
+             f"{m['impostors_high']} / 15; legit escalated_high {m['legit_high']}; legit verified {m['legit_verified']}; "
+             f"PII leaks {m['leaks']}", f"- LLM calls: {llm.usage.calls}; approx. cost ${cost:.3f} (assumed price)", "",
+             "## Outcome changes versus RESULTS_v2 (all 3 runs agreed there)", ""]
+    lines += [f"- {i}: was {', '.join(b)}, now {a}" for i, b, a in changed] or ["None. Every case ended with the same outcome as in all 3 runs of RESULTS_v2."]
+    lines += ["", "## Per case", "", "| Case | Expected | Actual | Reasons | Result |", "|---|---|---|---|---|"]
+    lines += [f"| {r['id']} | {r['expected']} | {r['actual']} | {', '.join(r['reasons'])} | {'PASS' if r['pass'] else 'FAIL'} |" for r in rows]
+    (EVAL / "RESULTS_4afix_rerun.md").write_text("
+".join(lines) + "
+", encoding="utf-8")
+    (EVAL / "results_4afix_rerun.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    print("passed", m["passed"], "/ 30; changes vs v2:", len(changed), "; leaks", m["leaks"])
+
+
 def main() -> None:
+    if "--rerun" in sys.argv:
+        main_rerun()
+        return
     if "--v2" in sys.argv:
         main_v2()
         return

@@ -120,8 +120,10 @@ def score_risk(s: Signals) -> Risk:
     if s.request_types & CONTACT_CHANGES:
         r.step_up = True
         r.reasons.append("CONTACT_CHANGE_STEP_UP")
-    if s.app_result in ("denied", "timeout"):
-        r.reasons.append(f"APP_APPROVAL_{s.app_result.upper()}")
+    if s.app_result == "denied":  # the member says it was not them: the strongest fraud signal, whatever the caller ID
+        high("MEMBER_DENIED_CALL")
+    elif s.app_result == "timeout":
+        r.reasons.append("APP_APPROVAL_TIMEOUT")
         if reverse_mismatch:
             r.level = "HIGH"
         else:
@@ -345,6 +347,7 @@ class Policy:
         self._update(app_result=self._approve(self.case.case_id))  # simulated banking-app approval
         risk = self._apply_risk()
         if risk.level == "HIGH":
+            self.case.verified = False  # a late denial or abandonment overrides the earlier identity check
             return self._finish("escalated_high", None, "escalate")
         if risk.unverified:
             self.case.risk_level = "MEDIUM"
@@ -354,15 +357,23 @@ class Policy:
         self.case.add_reason("APP_APPROVED_SIMULATED")
         return self._verified()
 
+    def idle_timeout(self) -> Turn | None:
+        """No activity for the idle window: close the call. A pending approval follows the abandon rule."""
+        if self.case.outcome:
+            return None
+        if self.case.state == "step_up":
+            return self._abandoned()
+        return self._finish("ended_safe", "CALL_ABANDONED", "end_safe")
+
     def _abandoned(self) -> Turn:
         """Caller ended the call or went silent with the approval pending: exactly an approval timeout."""
         self.case.add_reason("ABANDONED_DURING_STEP_UP")
         self._update(app_result="timeout")
         risk = self._apply_risk()
+        self.case.verified = False
         if risk.level == "HIGH":
             return self._finish("escalated_high", None, "escalate")
         self.case.risk_level = "MEDIUM"
-        self.case.verified = False
         return self._finish("unverified_handoff", None, "escalate")
 
     def _verified(self) -> Turn:

@@ -116,18 +116,24 @@ def test_row7_calling_number_no_record_requires_step_up_and_flag():
     assert "REVERSE_PHONE_NO_RECORD" in case.reasons and "NO_PHONE_RECORD" in case.flags
 
 
-@pytest.mark.parametrize("app", ["denied", "timeout"])
-def test_row8_app_denied_or_timeout_with_reverse_phone_mismatch_is_high(app):
-    case, _ = call(FixtureFacts("P01"), calling_from="other", app=app,
+@pytest.mark.parametrize("calling_from", ["member", "other"])
+def test_row8_member_deny_is_escalated_high_whatever_the_caller_id(calling_from):
+    case, _ = call(FixtureFacts("P01"), calling_from=calling_from, app="denied",
                    then=[Interpretation(intent="confirm_approval")])
-    assert case.outcome == "escalated_high" and f"APP_APPROVAL_{app.upper()}" in case.reasons
+    assert case.outcome == "escalated_high" and case.risk_level == "HIGH" and "MEMBER_DENIED_CALL" in case.reasons
+    assert not case.verified
 
 
-@pytest.mark.parametrize("app", ["denied", "timeout"])
-def test_row8_app_denied_or_timeout_without_reverse_mismatch_is_unverified_medium(app):
-    case, _ = call(FixtureFacts("P01"), app=app, then=[Interpretation(intent="confirm_approval")])
+def test_row8_timeout_with_reverse_phone_mismatch_is_high():
+    case, _ = call(FixtureFacts("P01"), calling_from="other", app="timeout",
+                   then=[Interpretation(intent="confirm_approval")])
+    assert case.outcome == "escalated_high" and "APP_APPROVAL_TIMEOUT" in case.reasons
+
+
+def test_row8_timeout_without_reverse_mismatch_is_unverified_medium():
+    case, _ = call(FixtureFacts("P01"), app="timeout", then=[Interpretation(intent="confirm_approval")])
     assert case.outcome == "unverified_handoff" and case.risk_level == "MEDIUM"
-    assert f"APP_APPROVAL_{app.upper()}" in case.reasons
+    assert "APP_APPROVAL_TIMEOUT" in case.reasons and "MEMBER_DENIED_CALL" not in case.reasons
 
 
 def test_row8_redirect_to_new_number_is_high():
@@ -143,7 +149,7 @@ def test_row9_invalid_new_email_flags_and_requires_step_up_but_is_not_high():
     case, _ = call(StubFacts(email_ok=False), first=first, then=[Interpretation(intent="confirm_approval")])
     assert case.outcome == "verified_handoff" and "EMAIL_INVALID" in case.flags and case.risk_level == "LOW"
     case, _ = call(StubFacts(email_ok=False), first=first, app="denied", then=[Interpretation(intent="confirm_approval")])
-    assert case.outcome == "unverified_handoff"
+    assert case.outcome == "escalated_high" and "MEMBER_DENIED_CALL" in case.reasons
 
 
 def test_row10_contact_change_with_money_is_high_even_when_clean():
@@ -338,11 +344,35 @@ def test_late_contact_change_request_requires_step_up_then_hands_off():
     assert t.done and p.case.outcome == "verified_handoff" and "APP_APPROVED_SIMULATED" in p.case.reasons
 
 
-def test_late_contact_change_denied_is_unverified_medium_and_not_verified():
+def test_late_contact_change_denied_is_escalated_high_and_not_verified():
     p = verified_without_request(app="denied")
     p.handle(Interpretation(intent="make_request", request_types=("change_mailing_address",)))
     p.handle(Interpretation(intent="confirm_approval"))
+    assert p.case.outcome == "escalated_high" and not p.case.verified and "MEMBER_DENIED_CALL" in p.case.reasons
+
+
+def test_late_contact_change_timeout_is_unverified_medium_and_not_verified():
+    p = verified_without_request(app="timeout")
+    p.handle(Interpretation(intent="make_request", request_types=("change_mailing_address",)))
+    p.handle(Interpretation(intent="confirm_approval"))
     assert p.case.outcome == "unverified_handoff" and p.case.risk_level == "MEDIUM" and not p.case.verified
+
+
+# -- idle expiry ----------------------------------------------------------------------
+def test_idle_timeout_outside_step_up_ends_safe_call_abandoned():
+    p = keypad_policy()
+    t = p.idle_timeout()
+    assert t.done and p.case.outcome == "ended_safe" and "CALL_ABANDONED" in p.case.reasons
+    assert p.idle_timeout() is None  # a closed call is left alone
+
+
+def test_idle_timeout_while_approval_pending_follows_the_abandon_rule():
+    p = at_step_up(FixtureFacts("P01"), calling_from="other")
+    p.idle_timeout()
+    assert p.case.outcome == "escalated_high" and "ABANDONED_DURING_STEP_UP" in p.case.reasons
+    p = at_step_up(FixtureFacts("P01"))
+    p.idle_timeout()
+    assert p.case.outcome == "unverified_handoff" and p.case.risk_level == "MEDIUM"
 
 
 def test_late_non_contact_request_needs_no_step_up():
