@@ -23,6 +23,7 @@ class CaseRecord(SQLModel, table=True):
     reasons: str = "[]"  # JSON list of codes
     flags: str = "[]"  # JSON list of non-tactic flags
     tactics: str = "[]"  # JSON list of TACTIC_ flags
+    evidence: str = "[]"  # JSON list of {product, ran_at, result}: plain words, no bureau values
     created_at: float = 0.0
     updated_at: float = 0.0
     ended_at: float | None = None
@@ -54,6 +55,8 @@ def _migrate(eng) -> None:
         cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(caserecord)")}
         if "persona" not in cols:
             conn.exec_driver_sql("ALTER TABLE caserecord ADD COLUMN persona TEXT")
+        if "evidence" not in cols:
+            conn.exec_driver_sql("ALTER TABLE caserecord ADD COLUMN evidence TEXT DEFAULT '[]'")
 
 
 def upsert_case(public: dict, calling_from: str, persona: str | None = None) -> dict:
@@ -68,6 +71,7 @@ def upsert_case(public: dict, calling_from: str, persona: str | None = None) -> 
         rec.reasons = json.dumps(public["reasons"])
         rec.flags = json.dumps([f for f in flags if not f.startswith("TACTIC_")])
         rec.tactics = json.dumps([f for f in flags if f.startswith("TACTIC_")])
+        rec.evidence = json.dumps(public.get("evidence", []))
         rec.updated_at = now
         if public["outcome"] and rec.ended_at is None:
             rec.ended_at = now
@@ -86,7 +90,7 @@ def add_event(case_id: str, kind: str, code: str | None = None) -> None:
 def case_dict(rec: CaseRecord) -> dict:
     return {"case_id": rec.case_id, "outcome": rec.outcome, "risk": rec.risk, "verified": rec.verified,
             "language": rec.language, "state": rec.state, "calling_from": rec.calling_from, "persona": rec.persona,
-            "reasons": json.loads(rec.reasons), "flags": json.loads(rec.flags), "tactics": json.loads(rec.tactics),
+            "reasons": json.loads(rec.reasons), "flags": json.loads(rec.flags), "tactics": json.loads(rec.tactics), "evidence": json.loads(rec.evidence or "[]"),
             "created_at": rec.created_at, "updated_at": rec.updated_at, "ended_at": rec.ended_at}
 
 

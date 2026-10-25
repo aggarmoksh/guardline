@@ -11,6 +11,7 @@ type Case = {
   state: string;
   calling_from: "member" | "other";
   persona: string | null;
+  evidence: { product: string; ran_at: number; result: string }[];
   reasons: string[];
   flags: string[];
   tactics: string[];
@@ -168,6 +169,20 @@ export default function Cases() {
                 <span className="rounded bg-slate-800 px-2 py-0.5 text-xs">{c.calling_from === "member" ? "member phone (sim.)" : "other phone (sim.)"}</span>
                 <span className="ml-auto text-xs opacity-60">{c.case_id.slice(-8)} · {ago(c.created_at, now)}</span>
               </div>
+              {c.evidence?.length > 0 && (
+                <div className="mt-2 rounded-lg border border-slate-700 p-2" aria-label="CRS evidence">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">CRS evidence</p>
+                  <ul className="space-y-0.5 text-xs">
+                    {c.evidence.map((e, i) => (
+                      <li key={i} className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="font-semibold text-sky-300">{e.product}</span>
+                        <span className="text-slate-500">{new Date(e.ran_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}</span>
+                        <span>{e.result}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <ul className="mt-2 flex flex-wrap gap-1.5 text-xs">
                 {c.reasons.map((r) => <li key={r} className="rounded bg-slate-800 px-2 py-1">{label(r)}</li>)}
                 {c.flags.map((f) => <li key={f} className="rounded bg-amber-900 px-2 py-1">Flag: {FLAG[f] ?? f.toLowerCase()}</li>)}

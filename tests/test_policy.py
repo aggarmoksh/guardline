@@ -1,3 +1,4 @@
+import json
 """Policy tests: no network, no LLM. CRS facts come from tests/fixtures/crs_summaries.json."""
 import inspect
 
@@ -458,3 +459,80 @@ def test_tactic_none_adds_no_flag_and_validation_rejects_unknown_tactics():
     assert interpreter.validate({**base, "tactics": ["urgency"]}).tactics == ("urgency",)
     with pytest.raises(ValueError):
         interpreter.validate({**base, "tactics": ["made_up"]})
+
+
+# -- CRS evidence: one plain-words entry per CRS call, no bureau values -------------------------------
+def evidence_of(facts, calling_from="member", request=("change_mailing_address",), new_value=None, approve="approved"):
+    p = Policy(FAKE, facts, calling_from, lambda _i: approve, keypad_mode=True)
+    p.start()
+    p.handle(Interpretation(intent="make_request", request_types=request, new_contact_value=new_value))
+    p.handle(Interpretation(stated_name="Test Person"))
+    type_all(p)
+    return {e["product"]: e for e in p.case.evidence}, p
+
+
+def test_evidence_names_the_product_the_time_and_the_result_in_plain_words():
+    import time
+    before = time.time()
+    ev, _ = evidence_of(FixtureFacts("P01"))
+    assert set(ev) == {"TransUnion identity verification", "AccurateAppend reverse phone"}
+    assert ev["TransUnion identity verification"]["result"] == "Subject found, no alerts"
+    assert ev["AccurateAppend reverse phone"]["result"] == "Number registered to this member"
+    assert all(before <= e["ran_at"] <= time.time() for e in ev.values())
+
+
+def test_evidence_fraud_alert_and_synthetic_and_different_person_in_plain_words():
+    ev, _ = evidence_of(FixtureFacts("P16"))
+    assert ev["TransUnion identity verification"]["result"] == "Fraud alert on file (code 2401)"
+    ev, _ = evidence_of(FixtureFacts("P13"))
+    assert "synthetic-identity indicators (codes 2101, 2201, 2202)" in ev["TransUnion identity verification"]["result"]
+    assert ev["AccurateAppend reverse phone"]["result"] == "No record for the number the call came from"
+    ev, _ = evidence_of(FixtureFacts("P01"), calling_from="other")
+    assert ev["AccurateAppend reverse phone"]["result"] == "Number registered to a different person"
+    ev, _ = evidence_of(FixtureFacts("P14"))
+    assert "Deceased indicator (code 2301)" in ev["TransUnion identity verification"]["result"]
+
+
+def test_evidence_no_file_and_new_email_checks():
+    ev, _ = evidence_of(StubFacts(status="SUBJECT_NOT_FOUND"))
+    assert ev["TransUnion identity verification"]["result"] == "No file found for this member"
+    ev, _ = evidence_of(StubFacts(email_ok=False), request=("change_email",), new_value="x@x")
+    assert ev["AtData FraudFinder"]["result"] == "New email is invalid"
+    ev, _ = evidence_of(StubFacts(email_ok=True), request=("change_email",), new_value="a@b.co")
+    assert ev["AtData FraudFinder"]["result"] == "New email is valid"
+
+
+def test_evidence_in_the_public_case_file_holds_no_member_data_or_raw_values():
+    import json
+    _, p = evidence_of(FixtureFacts("P16"))
+    blob = json.dumps(p.case.public()["evidence"])
+    for value in ("1990-01-02", "90210", "4321", "Test Person", "t@example.test", "0000000000"):
+        assert value not in blob
+    assert set(p.case.public()["evidence"][0]) == {"product", "ran_at", "result"}
+
+
+def test_no_crs_call_means_no_evidence_when_identity_fails_locally():
+    p = keypad_policy()
+    p.handle(Interpretation(stated_name="Test Person"))
+    type_all(p, dob="01021991")
+    assert p.case.evidence == []  # the local mismatch stops before any CRS call
+
+
+# -- phone on file (OPERATOR_PHONE override) ---------------------------------------------------
+def test_operator_phone_overrides_p01_phone_on_file_and_is_not_committed(tmp_path, monkeypatch):
+    from guardline import members
+    raw = tmp_path / "members.json"
+    raw.write_text(json.dumps({
+        "P01": {"name": "A B", "dob": "1990-01-02", "zip": "90210", "ssn_last4": "4321", "phone_on_file": "0000000001",
+                "email_on_file": "a@b.test"},
+        "P02": {"name": "C D", "dob": "1990-01-02", "zip": "90210", "ssn_last4": "4321", "phone_on_file": "0000000002",
+                "email_on_file": "c@d.test"}}), encoding="utf-8")
+    monkeypatch.setattr(members, "RAW", tmp_path)
+    monkeypatch.setenv("OPERATOR_PHONE", "+1 (415) 555-0199")  # a fake number
+    m = members.load_members()
+    assert m["P01"].phone_on_file == "4155550199" and m["P02"].phone_on_file == "0000000002"
+    assert m["P01"].is_known_number("+14155550199") and m["P01"].is_known_number("415-555-0199")
+    assert not m["P01"].is_known_number("4155550100") and not m["P02"].is_known_number("")
+    monkeypatch.delenv("OPERATOR_PHONE")
+    monkeypatch.setattr(members, "load_dotenv", lambda *a, **k: None)
+    assert members.load_members()["P01"].phone_on_file == "0000000001"

@@ -4,6 +4,7 @@ The model can make a call safer, never less safe: the interpreter supplies enums
 caller-stated slots, this module decides.
 """
 import secrets
+import time
 import unicodedata
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -23,6 +24,9 @@ FRAUD_ALERT = 2401
 MAX_UNCLEAR = 3
 FUZZY_NAME_THRESHOLD = 0.88
 TYPED_FIELDS = ("dob", "zip", "ssn_last4")  # entered on the keypad, in this order
+PRODUCT_IDENTITY = "TransUnion identity verification"
+PRODUCT_REVERSE = "AccurateAppend reverse phone"
+PRODUCT_FRAUD = "AtData FraudFinder"
 FIELD_PROMPT = {"name": "ask_name", "dob": "ask_dob", "zip": "ask_zip", "ssn_last4": "ask_ssn4"}
 
 
@@ -139,6 +143,27 @@ def score_risk(s: Signals) -> Risk:
     return r
 
 
+def identity_evidence(ident) -> str:
+    codes = set(ident.alert_codes)
+    if ident.verification_status is not None and ident.verification_status != "SUBJECT_FOUND":
+        return "No file found for this member"
+    parts = []
+    if codes & MISMATCH_OR_SYNTHETIC:
+        shown = ", ".join(str(c) for c in sorted(codes & MISMATCH_OR_SYNTHETIC))
+        parts.append(f"Identity mismatch or synthetic-identity indicators (codes {shown})")
+    if DECEASED in codes:
+        parts.append(f"Deceased indicator (code {DECEASED})")
+    if FRAUD_ALERT in codes:
+        parts.append(f"Fraud alert on file (code {FRAUD_ALERT})")
+    return "; ".join(parts) or "Subject found, no alerts"
+
+
+def reverse_evidence(calling) -> str:
+    if not calling.record_found:
+        return "No record for the number the call came from"
+    return "Number registered to this member" if calling.name_matches_member else "Number registered to a different person"
+
+
 # -- case and turns -------------------------------------------------------------
 @dataclass
 class Interpretation:
@@ -168,6 +193,7 @@ class Case:
     stated: dict[str, str] = field(default_factory=dict)
     new_contact_value: str | None = None
     audit: list[tuple[str, str]] = field(default_factory=list)  # (state, reason code)
+    evidence: list[dict] = field(default_factory=list)  # one entry per CRS call: product, when, plain-words result
 
     def add_reason(self, code: str) -> None:
         if code not in self.reasons:
@@ -180,6 +206,7 @@ class Case:
             "case_id": self.case_id, "outcome": self.outcome, "risk": self.risk_level,
             "verified": self.verified, "language": self.language, "final_state": self.state,
             "requests": sorted(self.request_types), "reasons": self.reasons, "flags": self.flags,
+            "evidence": list(self.evidence),
         }
 
 
@@ -313,12 +340,16 @@ class Policy:
         if fuzzy:
             c.add_reason("NAME_FUZZY_MATCH")
         ident = self.facts.identity()
+        self._note(PRODUCT_IDENTITY, identity_evidence(ident))
         calling = self.facts.calling_from(self.calling_from)
+        self._note(PRODUCT_REVERSE, reverse_evidence(calling))
         self._update(verification_status=ident.verification_status, risk_indicator=ident.risk_indicator,
                      alert_codes=ident.alert_codes, calling_record_found=calling.record_found,
                      calling_name_matches=calling.name_matches_member)
         if "change_email" in c.request_types and c.new_contact_value:
-            self._update(new_email_valid=self.facts.email_valid(c.new_contact_value))
+            email_ok = self.facts.email_valid(c.new_contact_value)
+            self._note(PRODUCT_FRAUD, "New email is valid" if email_ok else "New email is invalid")
+            self._update(new_email_valid=email_ok)
         risk = self._apply_risk()
         if risk.level == "HIGH":
             return self._finish("escalated_high", None, "escalate")
@@ -417,6 +448,10 @@ class Policy:
         if stated == on_file:
             return True, False
         return jaro_winkler(stated, on_file) >= FUZZY_NAME_THRESHOLD, True
+
+    def _note(self, product: str, result: str) -> None:
+        """Evidence for the human: which CRS product ran, when, and what it said in plain words. No bureau values."""
+        self.case.evidence.append({"product": product, "ran_at": time.time(), "result": result})
 
     def _update(self, **changes) -> None:
         self._signals = replace(self._signals, **changes)

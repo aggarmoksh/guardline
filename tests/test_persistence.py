@@ -44,7 +44,7 @@ def test_stored_case_has_only_code_fields(fresh_db):
     db.upsert_case(public("c1", "verified_handoff", verified=True, reasons=["VERIFIED"]), "member")
     [row] = db.list_cases()
     assert set(row) == {"case_id", "outcome", "risk", "verified", "language", "state", "calling_from", "reasons",
-                        "flags", "tactics", "created_at", "updated_at", "ended_at", "persona"}
+                        "flags", "tactics", "evidence", "created_at", "updated_at", "ended_at", "persona"}
 
 
 def test_counters_come_from_stored_rows(fresh_db):
@@ -217,3 +217,27 @@ def test_live_sweeper_closes_idle_calls_and_spares_active_ones(fresh_db):
         assert rows[idle.policy.case.case_id]["persona"] == "P01"
     finally:
         api._sessions.clear()
+
+
+def test_crs_evidence_round_trips_through_the_database(fresh_db):
+    ev = [{"product": "AtData FraudFinder", "ran_at": 123.0, "result": "New email is invalid"}]
+    db.upsert_case({**public("c1", "escalated_high", "HIGH"), "evidence": ev}, "member", "P01")
+    [row] = db.list_cases()
+    assert row["evidence"] == ev
+
+
+def test_existing_database_without_the_evidence_column_is_migrated(tmp_path):
+    import sqlite3
+    path = tmp_path / "old2.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE caserecord (case_id TEXT PRIMARY KEY, outcome TEXT, risk TEXT, verified INTEGER, "
+                "language TEXT, state TEXT, calling_from TEXT, persona TEXT, reasons TEXT, flags TEXT, tactics TEXT, "
+                "created_at REAL, updated_at REAL, ended_at REAL)")
+    con.execute("INSERT INTO caserecord VALUES ('old', NULL, 'LOW', 0, 'en', 'collect_identity', 'member', NULL, '[]', '[]', '[]', 1, 1, NULL)")
+    con.commit()
+    con.close()
+    try:
+        db.engine(path)
+        assert db.list_cases()[0]["evidence"] == []
+    finally:
+        db._engine = None
