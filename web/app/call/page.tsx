@@ -198,12 +198,17 @@ export default function Call() {
             </label>
           ))}
         </fieldset>
-        <label className="flex items-center gap-3 text-sm">
-          Demo member
-          <select className="rounded border p-1 text-black" value={persona} onChange={(e) => setPersona(e.target.value)}>
-            {["P01", "P13", "P16"].map((p) => <option key={p}>{p}</option>)}
-          </select>
-        </label>
+        <fieldset className="flex flex-col gap-2 rounded-xl border p-4">
+          <legend className="px-1 text-xs font-semibold uppercase text-amber-600">Demo member (whose details you will give)</legend>
+          <div className="flex gap-2">
+            {["P01", "P13", "P16"].map((id) => (
+              <button key={id} onClick={() => setPersona(id)}
+                className={`flex-1 rounded-lg border p-3 text-lg font-semibold ${persona === id ? "border-blue-500 bg-blue-600 text-white" : ""}`}>
+                {id}
+              </button>
+            ))}
+          </div>
+        </fieldset>
         <div>{chip}</div>
         <button disabled={busy} onClick={start} className="rounded-2xl bg-blue-600 p-5 text-xl font-semibold text-white disabled:opacity-50">
           Start call
@@ -217,7 +222,7 @@ export default function Call() {
     <main className="mx-auto flex min-h-dvh max-w-md select-none flex-col gap-3 p-4" style={{ WebkitTouchCallout: "none" }}>
       <header className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase text-amber-600">
-          Simulated caller: {callingFrom === "member" ? "member phone" : "other phone"}
+          Simulated caller: {callingFrom === "member" ? "member phone" : "other phone"} · Demo member {persona}
         </span>
         {chip}
       </header>
