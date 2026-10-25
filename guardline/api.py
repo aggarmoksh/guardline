@@ -18,7 +18,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFil
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from guardline import db, interpreter, line, phrasing, speaker
+from guardline import db, interpreter, line, live, phrasing, speaker
 from guardline.broker import Broker
 from guardline.facts import DeferredFacts, LiveFacts
 from guardline.llm import LLM, LLMError
@@ -61,6 +61,8 @@ class Session:
     known_number: bool | None = None
     line: "line.LineState | None" = None
     resolved: threading.Event = field(default_factory=threading.Event)  # set when the approval is answered or expires
+    started_at: float = field(default_factory=time.time)
+    transcript: list = field(default_factory=list)  # masked at insertion, in memory only, for the /live view
 
 
 _line_sessions: dict[str, Session] = {}
@@ -136,6 +138,29 @@ def _leaks_member_value(text: str) -> bool:
 NATURAL_WEB = os.environ.get("NATURAL_REPLIES", "1") != "0"
 
 
+def _callback_variant(sess: "Session", message_id: str) -> str:
+    """Urgency or an emergency is acknowledged, and the callback is called the fastest path. Same decision, other words."""
+    if message_id == "escalate" and "TACTIC_URGENCY" in sess.policy.case.flags:
+        return "escalate_urgent"
+    return message_id
+
+
+def _mask_terms(sess: Session) -> list[str]:
+    """Everything that must never reach the big screen: all members.json values and the name this caller stated."""
+    _leaks_member_value("")  # makes sure the value list is loaded
+    terms = list(_leak_values or [])
+    stated = sess.policy.case.stated
+    return terms + [stated[k] for k in ("name", "dob", "zip", "ssn_last4") if stated.get(k)]
+
+
+def _note(sess: Session, who: str, text: str | None) -> None:
+    """Add a bubble to the live view. Masked here, before it is stored; never persisted."""
+    if not text:
+        return
+    sess.transcript.append({"who": who, "text": live.mask_text(text, _mask_terms(sess)), "ts": time.time()})
+    del sess.transcript[:-60]
+
+
 def _speak(sess: Session, message_id: str, audio: bool = True, utterance: str | None = None) -> tuple[str, str | None, float, float]:
     """Returns (agent text, audio b64 or None, llm_ms, tts_ms). A leak guard checks every agent line.
 
@@ -143,6 +168,7 @@ def _speak(sess: Session, message_id: str, audio: bool = True, utterance: str | 
     fixed sentence and counts GUARD_REJECTED. The decision itself never comes from the model.
     """
     lang = sess.policy.case.language
+    message_id = _callback_variant(sess, message_id)
     t0 = time.perf_counter()
     text = fixed = speaker.render(llm(), message_id, lang)
     if NATURAL_WEB and audio and message_id in phrasing.INTENTS:
@@ -217,6 +243,7 @@ def _resolve(sess: Session, decision: str) -> bool:
             text, audio, _, _ = _speak(sess, t.message_id, audio=sess.channel == "web")
             sess.advance_result = {"agent_text": text, "agent_audio": audio, "audio_mime": "audio/wav",
                                    "done": t.done, **_public_state(sess)}
+            _note(sess, "agent", text)
         _after_change(sess)
     sess.resolved.set()
     broker.publish("public", {"type": "turn_ready", "case_id": c.case_id})
@@ -252,6 +279,7 @@ def start_call(req: StartRequest):
     sess = holder["s"] = Session(policy, req.calling_from, req.persona)
     turn = policy.start()
     text, audio, _, _ = _speak(sess, turn.message_id)
+    _note(sess, "agent", text)
     with _lock:
         _sessions[policy.case.case_id] = sess
     db.add_event(policy.case.case_id, "call_started")
@@ -294,6 +322,8 @@ def turn(case_id: str = Form(...), language: str = Form("en"), audio: UploadFile
         llm_ms = (time.perf_counter() - t0) * 1000
 
         text, audio_b64, speak_llm_ms, tts_ms = _speak(sess, t.message_id, utterance=transcript)
+        _note(sess, "caller", transcript)
+        _note(sess, "agent", text)
         _after_change(sess)
         state = _public_state(sess)
     llm_ms += speak_llm_ms
@@ -322,6 +352,8 @@ def keypad_entry(body: Entry):
     with sess.lock:
         t = sess.policy.provide_typed(body.field, body.value)
         text, audio_b64, llm_ms, tts_ms = _speak(sess, t.message_id)
+        _note(sess, "caller", "typed on the keypad: " + live.MASK)
+        _note(sess, "agent", text)
         _after_change(sess)
         state = _public_state(sess)
     total_ms = (time.perf_counter() - t_total) * 1000
@@ -387,6 +419,29 @@ def cases(key: str | None = Query(None), x_demo_key: str | None = Header(None)):
 def cases_stream(key: str | None = Query(None), x_demo_key: str | None = Header(None)):
     _require_key(x_demo_key, key)
     return StreamingResponse(broker.subscribe("cases"), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@app.get("/api/live")
+def live_view(key: str | None = Query(None), x_demo_key: str | None = Header(None)):
+    """The most recent call for the big screen: masked chat, the checks as they run, a banner from the reason codes."""
+    _require_key(x_demo_key, key)
+    with _lock:
+        sessions = list(_sessions.values())
+    sess = max(sessions, key=lambda s: (s.policy.case.outcome is None, s.started_at), default=None)
+    stats = db.stats()
+    if sess is None:
+        return {"call": None, "stats": stats}
+    rec = live.from_public(sess.policy.case.public(), sess.calling_from, sess.persona, sess.channel, sess.known_number)
+    return {"call": {"case_id": rec["case_id"][-8:], "persona": rec["persona"], "channel": rec["channel"],
+                     "known_number": rec["known_number"], "language": rec["language"], "outcome": rec["outcome"],
+                     "state": rec["state"], "started_at": sess.started_at, "transcript": sess.transcript[-40:],
+                     "checks": live.checklist(rec), "banner": live.banner(rec)}, "stats": stats}
+
+
+@app.get("/api/notice")
+def callback_notice():
+    """Simulated member app: a case just ended non-verified, so the credit union will call back. Code-only."""
+    return db.latest_callback_notice(within_seconds=120)
 
 
 @app.get("/api/case/{case_id}")
@@ -503,6 +558,7 @@ def _line_reply(sess: Session, message_id: str, fixed: str, *, must_ask: str | N
 
 
 def _line_say(sess: Session, message_id: str, *, done: bool = False, cont: bool = False) -> dict:
+    message_id = _callback_variant(sess, message_id)
     text, _, _, _ = _speak(sess, message_id, audio=False)  # the fixed sentence is the fallback
     return _line_reply(sess, message_id, text, done=done, cont=cont)
 
@@ -561,7 +617,7 @@ def _line_wait_for_approval(sess: Session) -> dict:
     with sess.lock:
         result, sess.advance_result = sess.advance_result, None
         if result:
-            mid = "handoff" if sess.policy.case.verified else "escalate"
+            mid = "handoff" if sess.policy.case.verified else _callback_variant(sess, "escalate")
             return _line_reply(sess, mid, result["agent_text"], done=bool(result["done"]))
         if sess.resolved.is_set() or sess.policy.case.outcome:  # answered and already collected
             return _line_say(sess, "call_over", done=True)
@@ -663,6 +719,8 @@ def line_turn(body: LineTurn):
         sess = _line_sessions.get(body.conversation_id)
         if sess:
             sess.line.last_say = result
+            _note(sess, "caller", body.utterance)
+            _note(sess, "agent", result.get("say_fallback"))  # the Line model words it; we show our fixed sentence
             _log_line_latency(round((time.perf_counter() - t0) * 1000), sess.line.used_llm)
         return result
     except HTTPException:

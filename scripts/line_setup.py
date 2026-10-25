@@ -83,7 +83,7 @@ def main() -> None:
                 "line_token": {"type": "string", "constant_value": token}}}}}
     tool_id = ids.get("relay_tool")
     if tool_id:
-        r = c.patch(f"{API}/v1/agents/tools/{tool_id}", json=tool)
+        r = c.patch(f"{API}/v1/agents/tools/{tool_id}", json={k: v for k, v in tool.items() if k != "type"})  # type is immutable
         if r.status_code >= 400:
             print(f"tool update HTTP {r.status_code}; creating a new tool")
             tool_id = None

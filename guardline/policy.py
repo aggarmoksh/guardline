@@ -479,4 +479,6 @@ class Policy:
         if reason:
             c.add_reason(reason)
         c.outcome, c.state = outcome, "outcome"
+        if outcome in ("escalated_high", "unverified_handoff") and "CALLBACK_QUEUED" not in c.flags:
+            c.flags.append("CALLBACK_QUEUED")  # a callback to the number on file; the caller is never accused
         return Turn(message_id, True)

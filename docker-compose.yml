@@ -1,0 +1,25 @@
+# docker compose up --build   (API on :8000, web on :3000)
+# Secrets stay in .env on the host (not in any image). Member fixtures are mounted read-only.
+services:
+  api:
+    build: .
+    env_file: .env
+    environment:
+      GUARDLINE_DB: /data/guardline.db
+    volumes:
+      - ./fixtures/raw:/app/fixtures/raw:ro
+      - guardline-data:/data
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+  web:
+    build:
+      context: ./web
+      args:
+        API_ORIGIN: http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+volumes:
+  guardline-data: {}

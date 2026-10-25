@@ -17,6 +17,8 @@ export default function MemberApp() {
   const [left, setLeft] = useState(60);
   const [answer, setAnswer] = useState<string | null>(null);
   const [alertsOn, setAlertsOn] = useState(false);
+  const [notice, setNotice] = useState<{ case_id: string; ended_at: number } | null>(null);
+  const dismissed = useRef("");
   const offset = useRef(0); // server clock minus phone clock, in seconds
   const ctx = useRef<AudioContext | null>(null);
   const alertsRef = useRef(false);
@@ -66,6 +68,9 @@ export default function MemberApp() {
         } else if (!r.pending) {
           setReq(null);
         }
+        // a call that ended without verification: the credit union will call back (simulated notice)
+        const n = await (await fetch("/api/notice")).json();
+        setNotice(n.notice && n.case_id !== dismissed.current ? n : null);
       } catch {}
     };
     load();
@@ -145,6 +150,15 @@ export default function MemberApp() {
         </section>
       ) : (
         <section className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          {notice && (
+            <div className="w-full rounded-3xl border-2 border-sky-300 bg-white p-6 text-left text-[#0f204a]">
+              <p className="text-sm font-semibold uppercase tracking-wide text-sky-700">Notice (simulated)</p>
+              <p className="mt-1 text-2xl font-bold leading-tight">Bay Area Community CU will call you back about a recent call.</p>
+              <p className="mt-2 text-sm opacity-70">They will use the number we have on file. No action is needed from you.</p>
+              <button onClick={() => { dismissed.current = notice.case_id; setNotice(null); }}
+                className="mt-4 rounded-xl bg-[#0f204a] px-5 py-3 font-semibold text-white">OK</button>
+            </div>
+          )}
           <p className="text-xl font-medium">{answer ?? "No pending requests"}</p>
           <p className="text-sm opacity-60">You will be alerted here when the credit union needs to confirm a call.</p>
           {!alertsOn && (

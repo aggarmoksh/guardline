@@ -536,3 +536,19 @@ def test_operator_phone_overrides_p01_phone_on_file_and_is_not_committed(tmp_pat
     monkeypatch.delenv("OPERATOR_PHONE")
     monkeypatch.setattr(members, "load_dotenv", lambda *a, **k: None)
     assert members.load_members()["P01"].phone_on_file == "0000000001"
+
+
+# -- CALLBACK_QUEUED: every non-verified outcome queues a callback, nothing else does ------------------------
+def test_callback_is_queued_for_escalated_high_and_unverified_handoff_only():
+    case, _ = call(FixtureFacts("P13"))
+    assert case.outcome == "escalated_high" and "CALLBACK_QUEUED" in case.flags
+    p = Policy(FAKE, FixtureFacts("P01"), "member", lambda _i: "approved")
+    p.start()
+    p.handle(Interpretation(intent="ask_human"))
+    assert p.case.outcome == "unverified_handoff" and "CALLBACK_QUEUED" in p.case.flags
+    case, _ = call(FixtureFacts("P01"), then=[Interpretation(intent="confirm_approval")])
+    assert case.outcome == "verified_handoff" and "CALLBACK_QUEUED" not in case.flags
+    p = Policy(FAKE, FixtureFacts("P01"), "member", lambda _i: "approved")
+    p.start()
+    p.handle(Interpretation(intent="goodbye"))
+    assert p.case.outcome == "ended_safe" and "CALLBACK_QUEUED" not in p.case.flags

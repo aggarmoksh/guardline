@@ -24,8 +24,8 @@ const KEYPAD_FIELDS = {
 
 const OUTCOME_LABEL: Record<string, string> = {
   verified_handoff: "Verified. Passed to a team member.",
-  unverified_handoff: "Passed to a team member (not verified).",
-  escalated_high: "Escalated to a team member.",
+  unverified_handoff: "A team member will call you back at the number on file.",
+  escalated_high: "A team member will call you back at the number on file.",
   ended_safe: "Call ended.",
 };
 

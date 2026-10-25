@@ -133,3 +133,30 @@ def test_other_is_noise_unless_the_caller_makes_a_request():
     assert interpreter.validate({**base, "intent": "confirm_approval", "request_types": ["other"]}).request_types == ()
     assert interpreter.validate({**base, "intent": "make_request", "request_types": ["other"]}).request_types == ("other",)
     assert interpreter.validate({**base, "intent": "provide_info", "request_types": ["change_phone"]}).request_types == ("change_phone",)
+
+
+# -- neutral callback wording for every non-verified outcome (Phase 5A) ------------------------------
+def test_both_non_verified_outcomes_use_the_same_neutral_callback_intent():
+    intent, ask = phrasing.INTENTS["escalate"]
+    assert intent.startswith("CALLBACK_ON_FILE:") and ask is None
+    assert "number the credit union has on file" in intent and "never accuse" in intent.lower()
+    urgent, _ = phrasing.INTENTS["escalate_urgent"]
+    assert urgent.startswith("CALLBACK_ON_FILE:") and "fastest way" in urgent and "never accuse" in urgent.lower()
+    for text in (speaker.TEMPLATES["escalate"], speaker.TEMPLATES["escalate_urgent"]):
+        assert "call you back" in text and "number we have on file" in text
+        assert not any(w in text.lower() for w in ("fraud", "impostor", "suspicious", "denied", "failed", "could not confirm"))
+
+
+def _case_with_flags(*flags):
+    from guardline.facts import FixtureFacts
+    from guardline.policy import Policy
+    sess = api.Session(Policy(MEMBERS["P01"], FixtureFacts("P01"), "member", lambda _i: "approved"), "member", "P01")
+    sess.policy.case.flags.extend(flags)
+    return sess
+
+
+def test_urgency_picks_the_urgent_callback_wording_and_other_messages_are_untouched():
+    assert api._callback_variant(_case_with_flags(), "escalate") == "escalate"
+    assert api._callback_variant(_case_with_flags("TACTIC_URGENCY"), "escalate") == "escalate_urgent"
+    assert api._callback_variant(_case_with_flags("TACTIC_URGENCY"), "handoff") == "handoff"
+    assert api._callback_variant(_case_with_flags("TACTIC_AUTHORITY_CLAIM"), "escalate") == "escalate"

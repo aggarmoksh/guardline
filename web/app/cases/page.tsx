@@ -60,6 +60,7 @@ const REASON: Record<string, string> = {
 };
 const FLAG: Record<string, string> = {
   FRAUD_ALERT: "Fraud alert",
+  CALLBACK_QUEUED: "Callback queued",
   HUMAN_REVIEW: "Human review",
   NO_PHONE_RECORD: "No phone record",
   EMAIL_INVALID: "Invalid email",

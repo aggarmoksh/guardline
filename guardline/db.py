@@ -146,3 +146,14 @@ def close_stale(idle_seconds: float, now: float | None = None) -> list[str]:
             closed.append(rec.case_id)
         s.commit()
     return closed
+
+
+def latest_callback_notice(within_seconds: float = 120, now: float | None = None) -> dict:
+    """The newest case that ended non-verified (escalated_high or unverified_handoff) within the window, or none."""
+    now = time.time() if now is None else now
+    with Session(engine()) as s:
+        recs = s.exec(select(CaseRecord).where(CaseRecord.ended_at != None).order_by(CaseRecord.ended_at.desc()).limit(10)).all()  # noqa: E711
+    for rec in recs:
+        if rec.outcome in ("escalated_high", "unverified_handoff") and now - (rec.ended_at or 0) <= within_seconds:
+            return {"notice": True, "case_id": rec.case_id, "ended_at": rec.ended_at}
+    return {"notice": False}
