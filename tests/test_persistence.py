@@ -241,3 +241,23 @@ def test_existing_database_without_the_evidence_column_is_migrated(tmp_path):
         assert db.list_cases()[0]["evidence"] == []
     finally:
         db._engine = None
+
+
+# -- Phase 4C probe endpoint -----------------------------------------------------------------
+def test_line_probe_needs_the_token_and_logs_only_the_last_four_digits(fresh_db, monkeypatch, tmp_path, caplog):
+    import logging
+    from fastapi.testclient import TestClient
+    from guardline import api
+    monkeypatch.setenv("LINE_PROBE_TOKEN", "probe-token")
+    monkeypatch.setattr(api, "LINE_PROBE_CSV", tmp_path / "probe.csv")
+    client = TestClient(api.app)
+    assert client.post("/api/line/probe", json={"probe_token": "nope", "call_id": "c"}).status_code == 401
+    with caplog.at_level(logging.INFO):
+        r = client.post("/api/line/probe", json={"probe_token": "probe-token", "call_id": "call-abc-123",
+                                                 "caller_number": "+1 (415) 555-0142"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "caller_received": True}
+    written = (tmp_path / "probe.csv").read_text(encoding="utf-8")
+    assert "0142" in written and "4155550142" not in written and "415" not in written.replace("0142", "")
+    assert "4155550142" not in caplog.text and "0142" in caplog.text
+    r = client.post("/api/line/probe", json={"probe_token": "probe-token", "call_id": "c2"})
+    assert r.json()["caller_received"] is False

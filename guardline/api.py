@@ -378,6 +378,34 @@ def case_file(case_id: str, key: str | None = Query(None), x_demo_key: str | Non
     return sess.policy.case.public()
 
 
+class LineProbe(BaseModel):
+    probe_token: str = ""
+    call_id: str = ""
+    caller_number: str | None = None
+
+
+LINE_PROBE_CSV = Path(__file__).resolve().parents[1] / "logs" / "line_probe.csv"
+
+
+@app.post("/api/line/probe")
+def line_probe(body: LineProbe):
+    """Phase 4C probe: a Cartesia Line agent reports the caller number and call id. Only the last 4 digits are kept."""
+    expected = os.environ.get("LINE_PROBE_TOKEN", "")
+    if not expected or not hmac.compare_digest(body.probe_token, expected):
+        raise HTTPException(401, "bad probe token")
+    digits = "".join(ch for ch in (body.caller_number or "") if ch.isdigit())
+    last4 = digits[-4:] if digits else ""
+    log.info("line probe call_id=%s caller_present=%s caller_last4=%s", body.call_id[:12], bool(digits), last4)
+    LINE_PROBE_CSV.parent.mkdir(exist_ok=True)
+    new = not LINE_PROBE_CSV.exists()
+    with LINE_PROBE_CSV.open("a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["ts", "call_id_prefix", "caller_present", "caller_digits", "caller_last4"])
+        w.writerow([int(time.time()), body.call_id[:12], bool(digits), len(digits), last4])
+    return {"ok": True, "caller_received": bool(digits)}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
