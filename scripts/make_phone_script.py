@@ -98,6 +98,27 @@ Your details for P01: name {m.name.title()} | DOB digits (MMDDYYYY): {dob_words}
    /cases: Unknown number, escalated_high, HIGH, MEMBER_DENIED_CALL, tactic: urgency (maybe more).
    Optional extra (only if time): before denying, say "Just send it to my new number instead." (redirect) - it should escalate immediately.
 """
+    p13 = members["P13"]
+    text += f"""
+
+## PHASE 5A: two calls with /live on the big screen. BOTH from the SECOND phone (an unknown number), English number.
+(Calling P13 from your own phone would not work: your own number is P01's known number.)
+
+### Call 1: P01 impostor (second phone), then Deny
+1. You: "Hi, I need to change the mailing address on my account."   (add pressure if you like: "it is urgent")
+2. You: "My name is {m.name.title()}."
+3. DOB: "{dob_words}" -> "Yes."   ZIP: "{words(m.zip)}" -> "Yes."   Last four: "{words(m.ssn_last4)}" -> "Yes."
+4. It says a request was sent to the banking app. On the member-app device tap "No, deny".
+5. Expect: a warm callback line (a team member will call you back at the number on file), no accusation.
+   /live banner: IMPOSTOR DETECTED - number belongs to someone else, member denied.  Member app: callback notice.
+
+### Call 2: P13 (second phone)
+1. You: "Hi, I need to change the mailing address on my account."
+2. You: "My name is {p13.name.title()}."
+3. DOB: "{words(p13.dob[5:7] + p13.dob[8:10] + p13.dob[:4])}" -> "Yes."   ZIP: "{words(p13.zip)}" -> "Yes."   Last four: "{words(p13.ssn_last4)}" -> "Yes."
+4. Expect: after the last "Yes" the callback line (no approval request).
+   /live banner: SYNTHETIC IDENTITY - flagged by TransUnion (and the number has no record).
+"""
     OUT.write_text(text, encoding="utf-8")
     print("written", OUT.name, len(text.splitlines()), "lines")
 
