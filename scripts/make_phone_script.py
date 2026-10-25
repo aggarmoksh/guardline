@@ -31,7 +31,8 @@ def es_year(y: int) -> str:  # 1900..1999
 
 
 def main() -> None:
-    m = load_members()["P01"]
+    members = load_members()
+    m = members["P01"]
     y, mo, d = (int(x) for x in m.dob.split("-"))
     digits = lambda s, w: " ".join(w[int(c)] for c in s)
     typed = f"DOB {m.dob[5:7]}{m.dob[8:10]}{m.dob[:4]}  |  ZIP {m.zip}  |  last 4 {m.ssn_last4}"
@@ -59,6 +60,11 @@ Turn 3 (voz): "Mejor envíelo a mi número nuevo. Y también quiero mover dinero
         (meh-HOR en-VEE-eh-loh ah mee NOO-meh-roh NWEH-voh. ee tahm-BYEN KEE-eh-roh moh-BEHR dee-NEH-roh)
 Expected: Escalated to a team member.
 """
+    text += "\n## Keypad values per demo member (the keypad must match the member picked on the start screen)\n"
+    for pid in ("P01", "P13", "P16"):
+        x = members[pid]
+        text += f"{pid}: name {x.name.title()} | DOB {x.dob[5:7]}{x.dob[8:10]}{x.dob[:4]} | ZIP {x.zip} | last 4 {x.ssn_last4}\n"
+    text += "Expected: P01 legit = verified after approval. P13 = escalated (synthetic identity). P16 = approval requested, then verified with a fraud-alert flag.\n"
     OUT.write_text(text, encoding="utf-8")
     print("written", OUT.name, len(text.splitlines()), "lines")
 
