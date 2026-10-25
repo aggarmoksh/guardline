@@ -43,7 +43,7 @@ KEYWORDS: dict[str, dict[str, list[str]]] = {
            "ask_reenter": ["name"], "ask_identity": ["name"], "ask_app_approval": ["app"], "ask_request": ["help"],
            "ask_repeat": ["again", "repeat"]},
     "es": {"greet": ["ayud"], "ask_name": ["nombre"], "ask_dob": ["nacimiento"], "ask_zip": ["postal"], "ask_ssn4": ["cuatro"],
-           "ask_reenter": ["nombre"], "ask_identity": ["nombre"], "ask_app_approval": ["app"], "ask_request": ["ayud"],
+           "ask_reenter": ["nombre"], "ask_identity": ["nombre"], "ask_app_approval": ["app", "aplicaci"], "ask_request": ["ayud"],
            "ask_repeat": ["otra vez", "repit", "de nuevo"]},
 }
 

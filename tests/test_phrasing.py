@@ -119,3 +119,8 @@ def test_the_web_speaker_uses_natural_wording_and_falls_back_with_an_event(tmp_p
     events = [e.kind + ":" + str(e.code) for e in db.Session(db.engine()).exec(db.select(db.EventRecord)).all()]
     assert "guard_rejected:CLAIMS_VERIFICATION" in events
     db._engine = None
+
+
+def test_the_spanish_approval_reply_may_say_aplicacion():
+    assert check("Le enviamos una solicitud a su aplicación bancaria. Por favor, ábrala y toque aprobar.",
+                 message_id="ask_app_approval", language="es") is None
