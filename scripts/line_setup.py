@@ -52,7 +52,7 @@ INSTRUCTIONS = {
         "Si la herramienta falla o devuelve un error, di exactamente: Le estoy conectando con un miembro del equipo. Luego termina la llamada."),
 }
 
-GREETING = "Hi, thank you for calling Bay Area Community Credit Union. How can I help you today?"
+GREETING = "Hi, thank you for calling Fogline Credit Union. How can I help you today?"
 
 
 def main() -> None:

@@ -96,7 +96,7 @@ export default function Live() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-4xl font-semibold">GuardLine live</h1>
-          <p className="text-lg opacity-60">Bay Area Community CU · sandbox data only · digits and member details are masked</p>
+          <p className="text-lg opacity-60">Fogline Credit Union (fictional) · sandbox data only · digits and member details are masked</p>
         </div>
         <div className="flex gap-3">
           {counter("Calls", stats?.calls)}

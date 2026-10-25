@@ -149,7 +149,7 @@ export default function Cases() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">GuardLine cases</h1>
-          <p className="text-xs opacity-60">Bay Area Community CU · live · sandbox data only</p>
+          <p className="text-xs opacity-60">Fogline Credit Union (fictional) · live · sandbox data only</p>
         </div>
         <div className="flex gap-2" aria-label="Calls | Impostor attempts | Impostors verified | PII leaks">
           {counter("Calls", stats?.calls)}

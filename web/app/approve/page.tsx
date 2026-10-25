@@ -115,7 +115,7 @@ export default function MemberApp() {
         Demo member app (simulated)
       </div>
       <header className="px-6 pb-2 pt-6">
-        <p className="text-sm opacity-70">Bay Area Community CU</p>
+        <p className="text-sm opacity-70">Fogline Credit Union (fictional)</p>
         <h1 className="text-2xl font-semibold">Security center</h1>
       </header>
 
@@ -123,7 +123,7 @@ export default function MemberApp() {
         <section className="flex flex-1 flex-col gap-5 px-6 pb-8">
           <div className="rounded-3xl bg-white p-6 text-[#0f204a]">
             <p className="text-sm font-semibold uppercase tracking-wide text-amber-600">Security request</p>
-            <h2 className="mt-1 text-3xl font-bold leading-tight">Is this you calling Bay Area Community CU?</h2>
+            <h2 className="mt-1 text-3xl font-bold leading-tight">Is this you calling Fogline Credit Union (fictional)?</h2>
             <dl className="mt-5 space-y-2 text-base">
               <div className="flex justify-between"><dt className="opacity-60">Call time</dt>
                 <dd className="font-semibold">{new Date(req.requested_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</dd></div>
@@ -153,7 +153,7 @@ export default function MemberApp() {
           {notice && (
             <div className="w-full rounded-3xl border-2 border-sky-300 bg-white p-6 text-left text-[#0f204a]">
               <p className="text-sm font-semibold uppercase tracking-wide text-sky-700">Notice (simulated)</p>
-              <p className="mt-1 text-2xl font-bold leading-tight">Bay Area Community CU will call you back about a recent call.</p>
+              <p className="mt-1 text-2xl font-bold leading-tight">Fogline Credit Union (fictional) will call you back about a recent call.</p>
               <p className="mt-2 text-sm opacity-70">They will use the number we have on file. No action is needed from you.</p>
               <button onClick={() => { dismissed.current = notice.case_id; setNotice(null); }}
                 className="mt-4 rounded-xl bg-[#0f204a] px-5 py-3 font-semibold text-white">OK</button>

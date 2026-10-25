@@ -187,7 +187,7 @@ export default function Call() {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-5 p-6">
         <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">Demo (simulated phone line)</p>
-        <h1 className="text-3xl font-semibold">Bay Area Community CU</h1>
+        <h1 className="text-3xl font-semibold">Fogline Credit Union (fictional)</h1>
         <p className="text-sm opacity-70">Member phone line, answered by GuardLine. Sandbox data only.</p>
         <fieldset className="flex flex-col gap-2 rounded-xl border p-4">
           <legend className="px-1 text-xs font-semibold uppercase text-amber-600">Simulated caller ID</legend>
