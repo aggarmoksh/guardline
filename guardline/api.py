@@ -32,6 +32,7 @@ log = get_logger("guardline.api")
 LATENCY_CSV = Path(__file__).resolve().parents[1] / "logs" / "latency.csv"
 LATENCY_FIELDS = ["ts", "kind", "provider", "language", "stt_ms", "llm_ms", "tts_ms", "total_ms"]
 IDLE_SECONDS = int(os.environ.get("GUARDLINE_IDLE_SECONDS", "180"))
+HOLD_SECONDS = float(os.environ.get("GUARDLINE_HOLD_SECONDS", "12"))  # one held tool call; the agent calls again
 APPROVAL_SECONDS = int(os.environ.get("GUARDLINE_APPROVAL_SECONDS", "60"))
 SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 
@@ -506,8 +507,8 @@ def _line_say(sess: Session, message_id: str, *, done: bool = False, cont: bool 
     return _line_reply(sess, message_id, text, done=done, cont=cont)
 
 
-HOLD_INSTRUCTION = ("Speak your reply to the caller out loud first. Only after you have finished speaking it, "
-                    "call guardline_turn again with an empty utterance.")
+HOLD_INSTRUCTION = ("Speak your reply to the caller out loud first. Only after you have finished speaking it, call guardline_turn "
+                    "again, with the caller's words if they said something meanwhile, or an empty utterance if they said nothing.")
 
 
 def _line_text(sess: Session, text: str, message_id: str = "retry") -> dict:
@@ -551,19 +552,25 @@ def _line_confirm(sess: Session, answer: bool) -> dict:
 
 
 def _line_wait_for_approval(sess: Session) -> dict:
-    """Hold the turn until the member app answers or the 60 s timer fires. Never holds sess.lock while waiting."""
-    sess.resolved.wait(timeout=APPROVAL_SECONDS + 5)
+    """Hold the turn for a short while (HOLD_SECONDS) until the member app answers; never holds sess.lock while waiting.
+
+    A long silent hold left callers talking to nobody, and anything they said (even "send it to a new number") was not
+    heard until it ended. So the hold is short: if there is no answer yet, reassure briefly and let the agent call again,
+    this time with whatever the caller said. The 60 s approval timer still decides the outcome."""
+    sess.resolved.wait(timeout=HOLD_SECONDS)
     with sess.lock:
         result, sess.advance_result = sess.advance_result, None
         if result:
             mid = "handoff" if sess.policy.case.verified else "escalate"
             return _line_reply(sess, mid, result["agent_text"], done=bool(result["done"]))
+        if sess.resolved.is_set() or sess.policy.case.outcome:  # answered and already collected
+            return _line_say(sess, "call_over", done=True)
         sess.line.waits += 1
-        if sess.line.waits >= 2:  # something is wrong: stop waiting and hand to a human
+        if sess.line.waits > int((APPROVAL_SECONDS + 15) / max(HOLD_SECONDS, 1)) + 2:  # something is wrong: stop waiting
             t = sess.policy.idle_timeout()
             _after_change(sess)
             return _line_say(sess, t.message_id if t else "escalate", done=True)
-        return _line_say(sess, "ask_app_approval", cont=True)
+        return _line_say(sess, "still_waiting", cont=True)
 
 
 def _line_turn(body: LineTurn) -> dict:

@@ -29,6 +29,8 @@ INTENTS: dict[str, tuple[str, str | None]] = {
     "escalate": ("A colleague will take over from here. Give no reason and say nothing about checks or results.", None),
     "end_safe": ("The call is ending. Say a warm goodbye.", None),
     "llm_down": ("There is a technical problem and a colleague will take over. Apologise briefly.", None),
+    "still_waiting": ("You are still waiting for the member's answer in their banking app. Reassure the caller briefly. Say nothing about any outcome.",
+                      "Let me know if you need more time or help finding the app."),
     "call_over": ("The call has ended.", None),
     # phone line only: the digit read-back and the small prompts around it (the must_ask is the exact sentence)
     "heard": ("Read back exactly the digits the caller just said so they can confirm them. Do not change or add any digit.", None),

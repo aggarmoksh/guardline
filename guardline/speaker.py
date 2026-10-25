@@ -20,6 +20,7 @@ TEMPLATES = {
     "escalate": "I am going to bring in a colleague who will help you from here.",
     "end_safe": "Thank you for calling. Goodbye.",
     "llm_down": "I am sorry, I am having a technical problem. I am connecting you to a colleague now.",
+    "still_waiting": "I am still here. Take your time, and let me know if you need help finding the app.",
     "call_over": "This call has ended.",
 }
 LANG_NAMES = {"en": "English", "es": "Spanish"}

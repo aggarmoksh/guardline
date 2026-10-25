@@ -289,3 +289,28 @@ def test_a_call_with_no_stated_request_is_asked_what_it_needs_after_verification
         r = say(client, "c-norq", "yes")
     assert r["state"] == "request" and "help" in r["must_ask"].lower() and not r["end_call"]
     assert case_rows()[0]["outcome"] is None
+
+
+def test_a_long_wait_becomes_short_holds_with_a_reassuring_reply(client, monkeypatch):
+    monkeypatch.setattr(api, "HOLD_SECONDS", 0.2)
+    to_step_up(client, "c-short")
+    r = say(client, "c-short", "")  # no answer yet
+    assert r["continue"] is True and r["state"] == "step_up" and "still here" in r["say_fallback"].lower()
+    assert "outcome" not in r["intent"].lower() or "no outcome" in r["intent"].lower() or "nothing about" in r["intent"].lower()
+    client.post("/api/approval", json={"case_id": case_rows()[0]["case_id"], "decision": "approved"})
+    done = say(client, "c-short", "")
+    assert done["end_call"] is True and case_rows()[0]["outcome"] == "verified_handoff"
+
+
+def test_what_the_caller_says_while_waiting_is_handled_at_once_not_after_the_hold(client):
+    to_step_up(client, "c-talk", caller=OTHER_CALLER)
+    r = say(client, "c-talk", "Actually just send it to my new number.", caller=OTHER_CALLER)
+    assert r["end_call"] is True
+    assert case_rows()[0]["outcome"] == "escalated_high" and "REDIRECT_TO_NEW_NUMBER" in case_rows()[0]["reasons"]
+
+
+def test_chatter_while_waiting_gets_the_waiting_reply_and_does_not_resolve_the_approval(client):
+    to_step_up(client, "c-chat")
+    r = say(client, "c-chat", "Hmm, how would you even know if it is really me?")
+    assert r["continue"] is True and r["state"] == "step_up" and not r["end_call"]
+    assert case_rows()[0]["outcome"] is None
