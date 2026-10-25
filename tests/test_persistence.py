@@ -94,17 +94,17 @@ def test_broker_delivers_to_each_subscriber_on_its_channel():
     ready = threading.Barrier(3)
 
     def listen(channel, sink):
-        stream = b.subscribe(channel, keepalive=5)
+        stream = b.subscribe(channel, keepalive=60)
         next(stream)  # ": connected"
         ready.wait()
         sink.append(next(stream))
 
-    threads = [threading.Thread(target=listen, args=("public", got_public)),
-               threading.Thread(target=listen, args=("cases", got_cases))]
+    threads = [threading.Thread(target=listen, args=("public", got_public), daemon=True),
+               threading.Thread(target=listen, args=("cases", got_cases), daemon=True)]
     [t.start() for t in threads]
     ready.wait()
     b.publish("public", {"type": "approval_requested"})
-    [t.join(timeout=5) for t in threads]
+    threads[0].join(timeout=5)  # the cases listener stays blocked: nothing was published on its channel
     assert got_public and json.loads(got_public[0][len("data: "):])["type"] == "approval_requested"
     assert got_cases == []
 
