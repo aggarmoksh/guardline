@@ -82,9 +82,35 @@ Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22, a CRS 
 
 Docker alternative for the API and web (reads `.env`, mounts `fixtures/raw` read-only, no secrets in the images): `docker compose up --build`. The phone line additionally needs a public HTTPS URL for the Line tool and `scripts/line_setup.py`.
 
+## Use from Claude Desktop (read-only MCP server)
+
+`guardline/mcp_server.py` is a read-only MCP server (stdio) for a fraud analyst. It cannot verify a caller, approve anything or change a case: the database is opened read-only and there is no write tool. It shows only the code-only case file (outcome, risk, reason codes, flags, tactics, CRS evidence in plain words), never raw bureau data or member values.
+
+| Tool | Returns |
+|---|---|
+| `list_recent_cases(limit)` | The newest cases: outcome, risk, reason codes, tactics |
+| `get_case(case_id)` | One case file (full id or the last 8 characters) |
+| `explain_case(case_id)` | A plain-English summary built from the reason codes |
+| `eval_summary()` | The headline numbers from `eval/RESULTS_v2.md` |
+
+Install the optional extra once (`python -m uv sync --extra mcp`), then add this to `claude_desktop_config.json` (Windows path form; change the folder to where you cloned the repo) and restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "guardline": {
+      "command": "C:\\path\\to\\guardline\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "guardline.mcp_server"]
+    }
+  }
+}
+```
+
+It reads `guardline.db` in the repo folder (the file the demo writes). To point it elsewhere set `GUARDLINE_DB` in the config's `env`. You can also try it with the MCP inspector: `npx @modelcontextprotocol/inspector python -m guardline.mcp_server`.
+
 ## Layout
 
-- `guardline/`: policy, interpreter, speaker and phrasing guard, CRS client, API, phone-line relay, live view data, database
+- `guardline/`: policy, interpreter, speaker and phrasing guard, CRS client, API, phone-line relay, live view data, database, read-only MCP server
 - `web/`: Next.js pages
 - `eval/`: pre-registered cases, runner, leak check and results
 - `scripts/`: persona extraction, Line setup, demo start
