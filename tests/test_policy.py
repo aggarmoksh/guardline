@@ -355,3 +355,76 @@ def test_risk_indicator_high_alone_is_not_an_identity_signal():
     case, _ = call(StubFacts(status="SUBJECT_FOUND", risk="HIGH"),
                    first=Interpretation(intent="make_request", request_types=("balance_inquiry",)))
     assert case.outcome == "verified_handoff"
+
+
+# -- hang-up while the approval is pending, and scam-tactic flags --------------------------
+def at_step_up(facts, calling_from="member"):
+    p = Policy(FAKE, facts, calling_from, lambda _i: "approved", keypad_mode=True)
+    p.start()
+    p.handle(Interpretation(intent="make_request", request_types=("change_mailing_address",)))
+    p.handle(Interpretation(stated_name="Test Person"))
+    t = type_all(p)
+    assert t.message_id == "ask_app_approval" and p.case.state == "step_up"
+    return p
+
+
+def test_hangup_during_step_up_with_reverse_phone_mismatch_is_escalated_high():
+    p = at_step_up(FixtureFacts("P01"), calling_from="other")
+    t = p.handle(Interpretation(intent="goodbye"))
+    assert t.done and p.case.outcome == "escalated_high"
+    assert "ABANDONED_DURING_STEP_UP" in p.case.reasons and "CALLER_ENDED_CALL" not in p.case.reasons
+    assert not p.case.verified
+
+
+def test_hangup_during_step_up_with_clean_reverse_phone_is_unverified_handoff_medium():
+    p = at_step_up(FixtureFacts("P01"))
+    t = p.handle(Interpretation(intent="goodbye"))
+    assert t.done and p.case.outcome == "unverified_handoff" and p.case.risk_level == "MEDIUM"
+    assert "ABANDONED_DURING_STEP_UP" in p.case.reasons and not p.case.verified
+
+
+def test_silence_during_step_up_is_the_same_as_hanging_up():
+    p = at_step_up(FixtureFacts("P01"), calling_from="other")
+    turns = [p.repeat_needed() for _ in range(3)]
+    assert turns[-1].done and p.case.outcome == "escalated_high" and "ABANDONED_DURING_STEP_UP" in p.case.reasons
+
+
+def test_goodbye_outside_step_up_is_still_a_clean_end():
+    p = keypad_policy()
+    p.handle(Interpretation(intent="goodbye"))
+    assert p.case.outcome == "ended_safe" and "ABANDONED_DURING_STEP_UP" not in p.case.reasons
+
+
+def test_instruction_injection_adds_flag_and_leaves_the_outcome_unchanged():
+    def run(tactics):
+        p = keypad_policy()
+        p.handle(Interpretation(stated_name="Test Person", tactics=tactics))
+        type_all(p, dob="01021991")  # wrong DOB twice -> unverified_handoff either way
+        p.handle(Interpretation(stated_name="Test Person", tactics=tactics))
+        type_all(p, dob="01021991")
+        return p.case
+
+    plain, injected = run(()), run(("instruction_injection", "authority_claim"))
+    assert injected.outcome == plain.outcome == "unverified_handoff" and not injected.verified
+    assert injected.reasons == plain.reasons
+    assert {"TACTIC_INSTRUCTION_INJECTION", "TACTIC_AUTHORITY_CLAIM"} <= set(injected.flags)
+    assert not any(f.startswith("TACTIC_") for f in plain.flags)
+
+
+def test_tactics_never_verify_or_skip_the_step_up():
+    p = Policy(FAKE, FixtureFacts("P01"), "other", lambda _i: "approved", keypad_mode=True)
+    p.start()
+    p.handle(Interpretation(intent="make_request", request_types=("change_mailing_address",),
+                            tactics=("authority_claim", "instruction_injection", "urgency")))
+    p.handle(Interpretation(stated_name="Test Person"))
+    t = type_all(p)
+    assert t.message_id == "ask_app_approval" and not p.case.verified and p.case.outcome is None
+
+
+def test_tactic_none_adds_no_flag_and_validation_rejects_unknown_tactics():
+    from guardline import interpreter
+    base = {"intent": "unclear", "language": "en", "request_types": [], "redirect_to_new_number": False}
+    assert interpreter.validate({**base, "tactics": ["none"]}).tactics == ()
+    assert interpreter.validate({**base, "tactics": ["urgency"]}).tactics == ("urgency",)
+    with pytest.raises(ValueError):
+        interpreter.validate({**base, "tactics": ["made_up"]})

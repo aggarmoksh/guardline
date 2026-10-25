@@ -149,6 +149,7 @@ class Interpretation:
     request_types: tuple[str, ...] = ()
     new_contact_value: str | None = None
     redirect_to_new_number: bool = False
+    tactics: tuple[str, ...] = ()  # scam tactics seen in the utterance; they only ever add flags
 
 
 @dataclass
@@ -211,6 +212,8 @@ class Policy:
         """Interpreter output was invalid; ask the caller to repeat."""
         self._unclear += 1
         if self._unclear >= MAX_UNCLEAR:
+            if self.case.state == "step_up":  # silent while the approval is pending
+                return self._abandoned()
             return self._finish("ended_safe", "TOO_MANY_UNCLEAR_TURNS", "end_safe")
         return Turn("ask_repeat", expect=self.expected_field())
 
@@ -247,6 +250,10 @@ class Policy:
         c.request_types.update(it.request_types)
         if it.new_contact_value:
             c.new_contact_value = it.new_contact_value
+        for tactic in it.tactics:  # flags only: a tactic never removes a check and never verifies anyone
+            flag = f"TACTIC_{tactic.upper()}"
+            if tactic != "none" and flag not in c.flags:
+                c.flags.append(flag)
         spoken = [("name", it.stated_name)]
         if not self.keypad_mode:  # with a keypad, spoken digits are ignored
             spoken += [("dob", it.stated_dob), ("zip", it.stated_zip), ("ssn_last4", it.stated_ssn_last4)]
@@ -258,6 +265,8 @@ class Policy:
         if it.intent == "ask_human":
             return self._escalate_or_handoff("CALLER_REQUESTED_HUMAN")
         if it.intent == "goodbye":
+            if c.state == "step_up":  # hanging up while the approval is pending is a timeout, not a clean end
+                return self._abandoned()
             return self._finish("ended_safe", "CALLER_ENDED_CALL", "end_safe")
 
         # HIGH regardless of verification: redirect request, contact change with money or credentials
@@ -335,6 +344,17 @@ class Policy:
         self._stepped_up = True
         self.case.add_reason("APP_APPROVED_SIMULATED")
         return self._verified()
+
+    def _abandoned(self) -> Turn:
+        """Caller ended the call or went silent with the approval pending: exactly an approval timeout."""
+        self.case.add_reason("ABANDONED_DURING_STEP_UP")
+        self._update(app_result="timeout")
+        risk = self._apply_risk()
+        if risk.level == "HIGH":
+            return self._finish("escalated_high", None, "escalate")
+        self.case.risk_level = "MEDIUM"
+        self.case.verified = False
+        return self._finish("unverified_handoff", None, "escalate")
 
     def _verified(self) -> Turn:
         c = self.case
